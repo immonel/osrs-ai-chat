@@ -103,6 +103,12 @@ public class ToolBoxTest
 		{
 			return Collections.emptyList();
 		}
+
+		@Override
+		public Transports.State transports(boolean withItems)
+		{
+			return null;
+		}
 	}
 
 	/** The tools for a request sent with these settings, as the plugin makes them. */
@@ -128,9 +134,9 @@ public class ToolBoxTest
 	public void theToolsComeInOneOrder()
 	{
 		assertEquals(Arrays.asList("wiki_search", "wiki_page", "ge_price", "get_equipment", "get_inventory", "get_bank",
-			"get_slayer_task", "get_achievement_diaries"), names(tools(true, true, true).specs()));
+			"get_slayer_task", "get_achievement_diaries", "get_transport_options"), names(tools(true, true, true).specs()));
 		assertEquals(Arrays.asList("wiki_search", "wiki_page", "ge_price"), names(tools(true, false, false).specs()));
-		assertEquals(Arrays.asList("ge_price", "get_slayer_task", "get_achievement_diaries"),
+		assertEquals(Arrays.asList("ge_price", "get_slayer_task", "get_achievement_diaries", "get_transport_options"),
 			names(tools(false, false, true).specs()));
 		// GE prices need nothing from the player and send nothing anywhere: always there.
 		assertEquals(Collections.singletonList("ge_price"), names(tools(false, false, false).specs()));

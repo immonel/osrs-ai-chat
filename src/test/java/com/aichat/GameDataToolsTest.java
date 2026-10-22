@@ -4,7 +4,10 @@ import com.google.gson.JsonObject;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -13,6 +16,10 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
+import net.runelite.api.Quest;
+import net.runelite.api.QuestState;
+import net.runelite.api.gameval.VarPlayerID;
+import net.runelite.api.gameval.VarbitID;
 import org.junit.After;
 import org.junit.Test;
 import static org.junit.Assert.assertEquals;
@@ -102,6 +109,33 @@ public class GameDataToolsTest
 			read();
 			return GameData.diaries(id -> 1);
 		}
+
+		/** Whether the last transport read was asked for the player's items too. */
+		volatile Boolean withItems;
+
+		/** Every quest and diary done, the standard spellbook and 99 Magic; a charged glory worn. */
+		@Override
+		public Transports.State transports(boolean withItems)
+		{
+			read();
+			this.withItems = withItems;
+			Map<Quest, QuestState> quests = new EnumMap<>(Quest.class);
+			for (Quest q : Transports.QUESTS)
+			{
+				quests.put(q, QuestState.FINISHED);
+			}
+			Map<Integer, Integer> varbits = new HashMap<>();
+			for (int id : Transports.VARBITS)
+			{
+				varbits.put(id, 1);
+			}
+			varbits.put(VarbitID.SPELLBOOK, 0);
+			Map<Integer, Integer> varps = new HashMap<>();
+			varps.put(VarPlayerID.ELENAQUEST, 30);
+			Transports.Held held = withItems ? new Transports.Held(Collections.singletonList(
+				new GameData.ItemLine("Neck", "Amulet of glory(4)", false, 1, 0)), Collections.emptyList(), null) : null;
+			return new Transports.State(quests, varbits, varps, 99, 99, held);
+		}
 	}
 
 	private GameDataTools tools(Consumer<Runnable> clientThread, long timeoutMillis)
@@ -151,17 +185,20 @@ public class GameDataToolsTest
 	@Test
 	public void offersOnlyWhatTheSettingsShare()
 	{
-		assertEquals(Arrays.asList("get_equipment", "get_inventory", "get_bank", "get_slayer_task", "get_achievement_diaries"),
-			names(tools().specs()));
+		assertEquals(Arrays.asList("get_equipment", "get_inventory", "get_bank", "get_slayer_task", "get_achievement_diaries",
+			"get_transport_options"), names(tools().specs()));
 		shareCharacter = false;
 		assertEquals(Arrays.asList("get_equipment", "get_inventory", "get_bank"), names(tools().specs()));
 		shareItems = false;
 		shareCharacter = true;
-		assertEquals(Arrays.asList("get_slayer_task", "get_achievement_diaries"), names(tools().specs()));
+		// The transport the player has unlocked goes with their character; their items in it, only with both settings.
+		assertEquals(Arrays.asList("get_slayer_task", "get_achievement_diaries", "get_transport_options"),
+			names(tools().specs()));
 		shareCharacter = false;
 		assertTrue(tools().specs().isEmpty());
 
-		for (String name : Arrays.asList("get_equipment", "get_inventory", "get_bank", "get_slayer_task", "get_achievement_diaries"))
+		for (String name : Arrays.asList("get_equipment", "get_inventory", "get_bank", "get_slayer_task", "get_achievement_diaries",
+			"get_transport_options"))
 		{
 			assertTrue(name, GameDataTools.handles(name));
 		}
@@ -184,6 +221,115 @@ public class GameDataToolsTest
 		JsonObject bank = a.get(2).inputSchema.getAsJsonObject("properties").getAsJsonObject("search");
 		assertEquals("string", bank.get("type").getAsString());
 		assertFalse(a.get(2).inputSchema.has("required"));
+
+		// The same text whichever setting lets the items in: it names "Share items and gear" rather than change.
+		shareItems = false;
+		List<ChatApi.ToolSpec> noItems = tools().specs();
+		ChatApi.ToolSpec transport = a.get(5);
+		assertEquals("get_transport_options", transport.name);
+		assertEquals(transport.description, noItems.get(2).description);
+		assertEquals(transport.inputSchema.toString(), noItems.get(2).inputSchema.toString());
+		assertTrue(transport.description, transport.description.contains("\"" + ITEMS + "\""));
+		JsonObject category = transport.inputSchema.getAsJsonObject("properties").getAsJsonObject("category");
+		assertEquals("string", category.get("type").getAsString());
+		List<String> kinds = new ArrayList<>();
+		category.getAsJsonArray("enum").forEach(k -> kinds.add(k.getAsString()));
+		assertEquals(Transports.CATEGORIES, kinds);
+		assertFalse(transport.inputSchema.has("required"));
+	}
+
+	private static JsonObject category(String kind)
+	{
+		JsonObject input = new JsonObject();
+		input.addProperty("category", kind);
+		return input;
+	}
+
+	@Test
+	public void sharesUnlockedTransportReadOnTheClientThread() throws Exception
+	{
+		Ended e = run(tools(), "get_transport_options", new JsonObject());
+		assertFalse(e.result.error);
+		assertTrue(e.result.content, e.result.content.contains("\n\nFairy rings: available"));
+		assertTrue(e.result.content, e.result.content.contains("\n- Amulet of glory: (4) worn"));
+		assertEquals(Boolean.TRUE, game.withItems);
+		assertEquals(CLIENT_THREAD, game.readOn);
+		assertNotEquals(CLIENT_THREAD, e.thread);
+		// Their items went in too (the glory they wear): the line names them, as it does every look at their items.
+		assertEquals(Collections.singletonList("Shared your unlocked transport and teleport items"), activity);
+		assertEquals("Shared your unlocked transport and teleport items", PanelText.summary(activity).sharing);
+		assertEquals("Read your unlocked transport and teleport items, but didn't share it: the request had stopped",
+			GameDataTools.unshared(activity.get(0)));
+	}
+
+	@Test
+	public void itemsGoInOnlyWithShareItemsToo() throws Exception
+	{
+		shareItems = false;
+		Ended e = run(tools(), "get_transport_options", null);
+		assertFalse(e.result.error);
+		// Not read at all, and the answer says why they're missing.
+		assertEquals(Boolean.FALSE, game.withItems);
+		assertFalse(e.result.content, e.result.content.contains("Amulet of glory"));
+		assertTrue(e.result.content, e.result.content.contains("Teleport jewellery: left out: \"" + ITEMS + "\" is off."));
+		// The fairy rings' staff is an item too.
+		Ended rings = run(tools(), "get_transport_options", category("fairy_rings"));
+		assertEquals(Boolean.FALSE, game.withItems);
+		assertFalse(rings.result.content, rings.result.content.contains("Spirit trees"));
+
+		// Asking for the items alone, with their setting off: turned down without reading the game.
+		int reads = game.reads.get();
+		Ended items = run(tools(), "get_transport_options", category("items"));
+		assertTrue(items.result.error);
+		assertEquals("The player hasn't turned on \"" + ITEMS + "\" in AI Chat's settings, so their teleport items can't be "
+			+ "read. They can turn it on if they'd like you to see it.", items.result.content);
+		assertEquals(reads, game.reads.get());
+		assertEquals(Arrays.asList("Shared your unlocked transport", "Shared your unlocked transport",
+			"Didn't share your teleport items: \"" + ITEMS + "\" is off"), activity);
+
+		// A kind with nothing of theirs in it doesn't read their items, even with the setting on.
+		shareItems = true;
+		run(tools(), "get_transport_options", category("Spells"));
+		assertEquals(Boolean.FALSE, game.withItems);
+		run(tools(), "get_transport_options", category("items"));
+		assertEquals(Boolean.TRUE, game.withItems);
+		// The fairy rings look for a staff among their items: named too.
+		run(tools(), "get_transport_options", category("Fairy rings"));
+		assertEquals(Boolean.TRUE, game.withItems);
+		assertEquals(Arrays.asList("Shared your unlocked transport", "Shared your unlocked transport and teleport items",
+			"Shared your unlocked transport and teleport items"), activity.subList(3, 6));
+	}
+
+	@Test
+	public void anUnknownCategoryIsTurnedDown() throws Exception
+	{
+		Ended e = run(tools(), "get_transport_options", category("boats"));
+		assertTrue(e.result.error);
+		assertEquals("There's no category \"boats\". Leave category out for every kind, or use one of: fairy_rings, "
+			+ "spirit_trees, gnome_gliders, spells, items, diaries.", e.result.content);
+		assertEquals(0, game.reads.get());
+		assertEquals(Collections.singletonList("Skipped a look-up of your unlocked transport: there's no kind called "
+			+ "\"boats\""), activity);
+	}
+
+	@Test
+	public void unlockedTransportNeedsCharacterDetailsAndALogin() throws Exception
+	{
+		shareCharacter = false;
+		Ended off = run(tools(), "get_transport_options", category("items"));
+		assertTrue(off.result.error);
+		assertTrue(off.result.content, off.result.content.contains("\"" + CHARACTER + "\""));
+		assertEquals(0, game.reads.get());
+
+		shareCharacter = true;
+		game.loggedIn = false;
+		Ended out = run(tools(), "get_transport_options", new JsonObject());
+		assertTrue(out.result.error);
+		assertEquals("The player isn't logged in, so their unlocked transport can't be read. Ask them to log in first.",
+			out.result.content);
+		assertEquals(0, game.reads.get());
+		assertEquals(Arrays.asList("Didn't share your unlocked transport: \"" + CHARACTER + "\" is off",
+			"Couldn't share your unlocked transport: you're not logged in"), activity);
 	}
 
 	@Test
@@ -340,6 +486,8 @@ public class GameDataToolsTest
 	{
 		assertEquals("Read your equipment, but didn't share it: the request had stopped",
 			GameDataTools.unshared("Shared your equipment"));
+		assertEquals("Read your unlocked transport, but didn't share it: the request had stopped",
+			GameDataTools.unshared("Shared your unlocked transport"));
 		// Nothing was shared anyway.
 		String off = "Didn't share your bank: \"" + ITEMS + "\" is off";
 		assertEquals(off, GameDataTools.unshared(off));

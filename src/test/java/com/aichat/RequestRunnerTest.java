@@ -223,6 +223,12 @@ public class RequestRunnerTest
 		{
 			return Collections.emptyList();
 		}
+
+		@Override
+		public Transports.State transports(boolean withItems)
+		{
+			return null;
+		}
 	}
 
 	/** Runs what's waiting for the EDT, and whatever that queues in turn. */
@@ -406,7 +412,7 @@ public class RequestRunnerTest
 		host.characterRead.accept(null);
 		runEdt();
 		assertEquals(Arrays.asList("ge_price", "get_equipment", "get_inventory", "get_bank", "get_slayer_task",
-			"get_achievement_diaries"), toolNames());
+			"get_achievement_diaries", "get_transport_options"), toolNames());
 		assertNotNull(api.last().toolRunner);
 
 		api.listener().onReply(reply("a", 1, 1));
