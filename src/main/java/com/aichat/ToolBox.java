@@ -11,8 +11,8 @@ import lombok.extern.slf4j.Slf4j;
 /**
  * The tools that go with one request, and the runner that answers the model's calls to them: the look-ups first
  * (wiki_search and wiki_page with "Wiki look-ups", ge_price always), then the game-data tools the sharing settings allow
- * (get_equipment, get_inventory, get_bank, get_slayer_task, get_achievement_diaries). Always in that order: the tools
- * are part of the prompt the provider caches, and changing them sends earlier replies as plain text.
+ * (get_equipment, get_inventory, get_bank, get_slayer_task, get_achievement_diaries, get_location). Always in that
+ * order: the tools are part of the prompt the provider caches, and changing them sends earlier replies as plain text.
  */
 @Slf4j
 final class ToolBox implements ChatApi.ToolRunner
@@ -27,13 +27,15 @@ final class ToolBox implements ChatApi.ToolRunner
 		private final ScheduledExecutorService executor;
 		private final BooleanSupplier shareItems;
 		private final BooleanSupplier shareCharacter;
+		private final BooleanSupplier shareLocation;
 
 		/**
-		 * {@code shareItems}, {@code shareCharacter}: whether the settings allow sharing right now, AI requests
-		 * included; read on the tools' own threads.
+		 * {@code shareItems}, {@code shareCharacter}, {@code shareLocation}: whether the settings allow sharing right
+		 * now, AI requests included; read on the tools' own threads.
 		 */
 		Parts(WikiClient wiki, LookupTools.Prices prices, GameDataTools.Game game, Consumer<Runnable> clientThread,
-			ScheduledExecutorService executor, BooleanSupplier shareItems, BooleanSupplier shareCharacter)
+			ScheduledExecutorService executor, BooleanSupplier shareItems, BooleanSupplier shareCharacter,
+			BooleanSupplier shareLocation)
 		{
 			this.wiki = wiki;
 			this.prices = prices;
@@ -42,6 +44,7 @@ final class ToolBox implements ChatApi.ToolRunner
 			this.executor = executor;
 			this.shareItems = shareItems;
 			this.shareCharacter = shareCharacter;
+			this.shareLocation = shareLocation;
 		}
 
 		/**
@@ -52,10 +55,12 @@ final class ToolBox implements ChatApi.ToolRunner
 		{
 			LookupTools lookups = new LookupTools(setup.wikiLookups ? wiki : null, prices, activity, wanted);
 			// The settings as they were when the player sent the message, and as they are at each call: turning one off
-			// while a reply is being written stops the sharing at once.
+			// while a reply is being written stops the sharing at once, and turning one on doesn't share anything for a
+			// message sent without it.
 			GameDataTools gameData = new GameDataTools(game, clientThread, executor,
 				() -> setup.shareItems && shareItems.getAsBoolean(),
 				() -> setup.shareCharacter && shareCharacter.getAsBoolean(),
+				() -> setup.shareLocation && shareLocation.getAsBoolean(),
 				activity);
 			return new ToolBox(lookups, gameData, started);
 		}

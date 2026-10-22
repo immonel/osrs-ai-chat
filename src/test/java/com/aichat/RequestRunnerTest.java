@@ -6,6 +6,7 @@ import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -103,6 +104,8 @@ public class RequestRunnerTest
 		final List<Chat.Message> ended = new ArrayList<>();
 		boolean ai = true;
 		boolean character = true;
+		/** "Share where you are" (and AI requests) right now. */
+		boolean location = true;
 		int changed;
 		int live;
 		Consumer<String> characterRead;
@@ -111,7 +114,7 @@ public class RequestRunnerTest
 		Runnable started;
 		/** The plugin's tools, made from stand-ins: a Wiki that never sends anything, no prices, no game. */
 		final ToolBox.Parts parts = new ToolBox.Parts(new WikiClient(new OkHttpClient(), new Gson(), () -> false),
-			new NoPrices(), new NoGame(), Runnable::run, scheduler, () -> true, () -> character);
+			new NoPrices(), new NoGame(), Runnable::run, scheduler, () -> true, () -> character, () -> location);
 
 		@Override
 		public boolean aiRequests()
@@ -223,6 +226,12 @@ public class RequestRunnerTest
 		{
 			return Collections.emptyList();
 		}
+
+		@Override
+		public GameData.Location location()
+		{
+			return null;
+		}
 	}
 
 	/** Runs what's waiting for the EDT, and whatever that queues in turn. */
@@ -246,7 +255,14 @@ public class RequestRunnerTest
 
 	private RequestRunner.Setup setup(boolean shareCharacter, boolean shareItems, boolean wikiLookups)
 	{
-		return new RequestRunner.Setup(api, "claude-opus-5-5", "Be brief.", shareCharacter, shareItems, wikiLookups);
+		return setup(shareCharacter, shareItems, wikiLookups, false);
+	}
+
+	private RequestRunner.Setup setup(boolean shareCharacter, boolean shareItems, boolean wikiLookups,
+		boolean shareLocation)
+	{
+		return new RequestRunner.Setup(api, "claude-opus-5-5", "Be brief.", shareCharacter, shareItems, wikiLookups,
+			shareLocation);
 	}
 
 	private RequestRunner.Setup setup()
@@ -414,6 +430,41 @@ public class RequestRunnerTest
 		runner.send(chat, "What drops a whip?", setup(false, false, true));
 		runEdt();
 		assertEquals(Arrays.asList("wiki_search", "wiki_page", "ge_price"), toolNames());
+	}
+
+	@Test
+	public void whereThePlayerIsGoesOnlyWithAMessageSentToShareIt()
+	{
+		// Sent with "Share where you are" off, then turned on while the summary is made: the message wasn't sent to share
+		// it, so the tool isn't offered...
+		history(20);
+		host.location = false;
+		runner.send(chat, "How do I get to Ape Atoll from here?", setup(false, false, false, false));
+		runEdt();
+		assertTrue(chat.isSummarizing());
+		host.location = true;
+		api.listener().onReply(reply("The player asked about travel.", 50, 10));
+		runEdt();
+		assertEquals(2, api.sent.size());
+		assertEquals(Collections.singletonList("ge_price"), toolNames());
+		// ...and a call to it all the same is turned down, without reading the game.
+		ChatApi.ToolResult[] result = new ChatApi.ToolResult[1];
+		api.last().toolRunner.run("get_location", new JsonObject(), r -> result[0] = r);
+		assertTrue(result[0].error);
+		assertTrue(result[0].content, result[0].content.contains("\"" + SettingName.of("shareLocation") + "\""));
+
+		// Sent with it on, it's offered while it stays on, and not once it's off by the time the request goes.
+		Chat other = new Chat("Chat 2");
+		host.chats.add(other);
+		runner.send(other, "Where's the nearest bank?", setup(false, false, false, true));
+		runEdt();
+		assertEquals(Arrays.asList("ge_price", "get_location"), toolNames());
+		api.listener().onReply(reply("West of here.", 1, 1));
+		runEdt();
+		host.location = false;
+		runner.send(other, "And from Falador?", setup(false, false, false, true));
+		runEdt();
+		assertEquals(Collections.singletonList("ge_price"), toolNames());
 	}
 
 	private List<String> toolNames()

@@ -5,26 +5,38 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.IntUnaryOperator;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import net.runelite.api.Client;
 import net.runelite.api.EquipmentInventorySlot;
 import net.runelite.api.GameState;
 import net.runelite.api.Item;
 import net.runelite.api.ItemComposition;
 import net.runelite.api.ItemContainer;
+import net.runelite.api.Player;
+import net.runelite.api.WorldEntity;
+import net.runelite.api.WorldType;
+import net.runelite.api.WorldView;
+import net.runelite.api.coords.LocalPoint;
+import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.events.ItemContainerChanged;
 import net.runelite.api.gameval.DBTableID;
+import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.gameval.InventoryID;
 import net.runelite.api.gameval.ItemID;
 import net.runelite.api.gameval.VarPlayerID;
 import net.runelite.api.gameval.VarbitID;
+import net.runelite.api.widgets.Widget;
 import net.runelite.client.game.ItemManager;
 
 /**
  * The player's own account, for the game-data tools: what they wear and carry, their bank as last seen, their Slayer
- * task and their achievement diaries. Only ever their own: nothing about where they are, what's around them, or other
- * players. Reading happens on the client thread, where the game's data lives, and gives plain values; writing those
- * up for the model is separate (static, any thread), so it can be tested without a game.
+ * task, their achievement diaries, and where they're standing with whether the game says they can be attacked there.
+ * Only ever their own: nothing about what's around them, or other players. Reading happens on the client thread, where
+ * the game's data lives, and gives plain values; writing those up for the model is separate (static, any thread), so it
+ * can be tested without a game.
  */
 final class GameData implements GameDataTools.Game
 {
@@ -66,6 +78,84 @@ final class GameData implements GameDataTools.Game
 			VarbitID.WILDERNESS_DIARY_HARD_COMPLETE, VarbitID.WILDERNESS_DIARY_ELITE_COMPLETE),
 	};
 	private static final String[] TIERS = {"Easy", "Medium", "Hard", "Elite"};
+
+	/**
+	 * The game maps most underground areas 6400 tiles north of the land above them, so a tile that far north is below
+	 * ground. Not in a private instance, though: those are copied from templates kept anywhere on the map, a player-owned
+	 * house among them, so there it would say nothing.
+	 */
+	private static final int UNDERGROUND_Y = 6400;
+	/**
+	 * Between this and {@link #UNDERGROUND_Y} the map holds places of their own (Prifddinas, Mor Ul Rek, Zanaris, the
+	 * raids), set apart from each other in the numbering, so nearness there means nothing.
+	 */
+	private static final int SURFACE_TOP_Y = 4160;
+	private static final int SURFACE = 0;
+	private static final int SET_APART = 1;
+	private static final int UNDERGROUND = 2;
+	/** How near a landmark has to be before "near the west bank" is worth saying, and true. */
+	private static final int SPOT_TILES = 15;
+	/**
+	 * How far to look for a named place from somewhere unnamed. Further than this, "the nearest place is 400 tiles
+	 * south-east" misleads more than it helps: that's another part of the world.
+	 */
+	private static final int NEAREST_TILES = 120;
+	/** A distance said as it is below this, and rounded to the nearest ten above it: "about 80 tiles west". */
+	private static final int ROUND_TILES = 20;
+	/** What the game shows in the Wilderness, "Level: 23", read from the start: another plugin may add to the end. */
+	private static final Pattern SHOWN_LEVEL = Pattern.compile("Level: (\\d{1,3})(?!\\d)");
+	/** The one named region north of {@link #UNDERGROUND_Y} that isn't underground. */
+	private static final String UNDERWATER = "Underwater";
+	/** What {@link #pvpWorld} calls a Deadman world, whose rules differ from a PvP world's. */
+	private static final String DEADMAN_WORLD = "a Deadman world";
+
+	/**
+	 * The Wilderness on the map, as boxes of {x from, x to, y from, y to}, for a second opinion where the game says the
+	 * player isn't in it. Never to say that they are: that's the game's to say. The surface, from the ditch (y 3520,
+	 * where the levels start) to the Wilderness's northern edge (y 3967), and from x 2944 to 3391. Below it, the same
+	 * box 6400 tiles north, the way the game maps underground areas (y 9920 to 10367, y 9920 being where the dungeons'
+	 * levels start): the Edgeville Dungeon past its Wilderness gate, the Revenant Caves, the Wilderness God Wars, Lava
+	 * Maze and Deep Wilderness dungeons, Scorpia's cave. But only from x 3008 there: the Wilderness's dungeons start
+	 * further east (the Wilderness God Wars Dungeon at about x 3022), and Keldagrim, whose railway station is at x
+	 * 2941, lies just west. And the east end of the Wilderness Slayer Cave, which runs past x 3391 (RuneLite's own
+	 * shortcuts and cannon spots there lie at x 3333 to 3434, y 10056 to 10149): only from y 10048, so that the Slayer
+	 * Tower's basement in Morytania (x 3392 to 3455, y 9920 to 9983) isn't taken for it.
+	 */
+	private static final int[][] WILDERNESS = {
+		{2944, 3391, 3520, 3967},
+		{3008, 3391, 9920, 10367},
+		{3392, 3455, 10048, 10175},
+	};
+
+	/**
+	 * Landmarks worth naming after the place: "Varrock, near the west bank". Only banks and the like, where being near
+	 * one answers half the questions a player asks on their way somewhere. Each is said with its town's name unless the
+	 * player is in the region it stands in, so one town's bank is never taken for another's; the tests check every one
+	 * against the name RuneLite gives its region.
+	 */
+	static final Spot[] SPOTS = {
+		new Spot("Varrock", "the west bank", "Varrock West Bank", 3185, 3436),
+		new Spot("Varrock", "the east bank", "Varrock East Bank", 3253, 3420),
+		new Spot("Lumbridge", "the castle", "Lumbridge Castle", 3222, 3218),
+		new Spot("Lumbridge", "the general store", "the Lumbridge general store", 3214, 3246),
+		new Spot("Draynor", "the bank", "Draynor Village bank", 3093, 3243),
+		new Spot("Falador", "the east bank", "Falador East Bank", 3013, 3355),
+		new Spot("Falador", "the west bank", "Falador West Bank", 2946, 3368),
+		new Spot("Falador", "the party room", "the Falador Party Room", 3046, 3377),
+		new Spot("Edgeville", "the bank", "Edgeville bank", 3094, 3491),
+		new Spot("Al Kharid", "the bank", "Al Kharid bank", 3270, 3167),
+		new Spot("Al Kharid", "the palace", "Al Kharid palace", 3295, 3168),
+		new Spot("Port Sarim", "the docks", "Port Sarim docks", 3029, 3217),
+		new Spot("Seers' Village", "the bank", "Seers' Village bank", 2725, 3493),
+		new Spot("Kandarin", "Camelot Castle", "Camelot Castle", 2757, 3477),
+		new Spot("Catherby", "the bank", "Catherby bank", 2809, 3441),
+		new Spot("Ardougne", "the north bank", "Ardougne North Bank", 2616, 3332),
+		new Spot("Ardougne", "the south bank", "Ardougne South Bank", 2655, 3283),
+		new Spot("Yanille", "the bank", "Yanille bank", 2613, 3093),
+		new Spot("Canifis", "the bank", "Canifis bank", 3511, 3480),
+		new Spot("Tree Gnome Stronghold", "the bank", "the Tree Gnome Stronghold bank", 2446, 3425),
+		new Spot("Tree Gnome Stronghold", "the Grand Tree", "the Grand Tree", 2466, 3496),
+	};
 
 	private final Client client;
 	private final ItemManager itemManager;
@@ -169,6 +259,50 @@ final class GameData implements GameDataTools.Game
 		}
 	}
 
+	/**
+	 * Where the player is standing, and what the game itself says about the danger there, before any of it is put into
+	 * words. The coordinates never leave the plugin: some content hides the minimap on purpose (the Barrows tunnels are
+	 * a maze because of it), and the exact spot would give away what it hides, so only what's made from them goes: the
+	 * region's name, a landmark's, which floor, and for a spot with no name the nearest named region with roughly how
+	 * far and which way.
+	 */
+	static final class Location
+	{
+		final int x;
+		final int y;
+		/** 0 on the ground, 1 to 3 for the floors above it. */
+		final int plane;
+		/** In a private instance (a raid, a boss room, a player-owned house): the coordinates are its template's. */
+		final boolean instanced;
+		/** On something that moves over the map, as a boat does when Sailing: the coordinates are the sea's under it. */
+		final boolean aboard;
+		/** Whether the game counts the player as in the Wilderness: its own flag, never worked out from coordinates. */
+		final boolean inWilderness;
+		/** The Wilderness level the game shows on screen, or 0 when it shows none that can be read. */
+		final int shownLevel;
+		/** Whether the game marks the spot as one where players can attack each other, in the Wilderness or not. */
+		final boolean pvpArea;
+		/** "a PvP world", "a Deadman world": a world where players can attack each other almost anywhere; else null. */
+		final String pvpWorld;
+		/** A High Risk world, PvP or not: the Protect Item prayer doesn't work there. */
+		final boolean highRisk;
+
+		Location(int x, int y, int plane, boolean instanced, boolean aboard, boolean inWilderness, int shownLevel,
+			boolean pvpArea, String pvpWorld, boolean highRisk)
+		{
+			this.x = x;
+			this.y = y;
+			this.plane = plane;
+			this.instanced = instanced;
+			this.aboard = aboard;
+			this.inWilderness = inWilderness;
+			this.shownLevel = shownLevel;
+			this.pvpArea = pvpArea;
+			this.pvpWorld = pvpWorld;
+			this.highRisk = highRisk;
+		}
+	}
+
 	/** The bank's items as ids and amounts: cheap to take on the client thread every time the bank changes. */
 	static final class BankSnapshot
 	{
@@ -228,6 +362,28 @@ final class GameData implements GameDataTools.Game
 			this.name = name;
 			this.varbits = varbits;
 			this.doneAt = doneAt;
+		}
+	}
+
+	/** A landmark: the detail after a place's name, once the player is within {@link #SPOT_TILES} of it. */
+	static final class Spot
+	{
+		/** The name RuneLite gives the region it stands in. */
+		final String area;
+		/** What it's called by someone in that region: "the west bank". */
+		final String here;
+		/** What it's called from anywhere else: "Varrock West Bank". */
+		final String elsewhere;
+		final int x;
+		final int y;
+
+		Spot(String area, String here, String elsewhere, int x, int y)
+		{
+			this.area = area;
+			this.here = here;
+			this.elsewhere = elsewhere;
+			this.x = x;
+			this.y = y;
 		}
 	}
 
@@ -377,6 +533,45 @@ final class GameData implements GameDataTools.Game
 		return diaries(client::getVarbitValue);
 	}
 
+	/**
+	 * Null when the player has no position to read, as on a loading screen. On a boat the player stands in the boat's
+	 * own small world, which moves over the real one, so their spot is carried over to the map beneath it first, the
+	 * way RuneLite's own minimap code does it. In a private instance the coordinates read are its template's: the place
+	 * it was copied from. Whether they're in the Wilderness, and at what level, is the game's own word: the Wilderness's
+	 * edges are too ragged, and its safe spots too many, to draw here, and a wrong guess there could tell a player
+	 * they're safe when they aren't. Its rough borders on the map ({@link #WILDERNESS}) only ever add a warning to the
+	 * game's "no", when the words are written.
+	 */
+	@Override
+	public Location location()
+	{
+		Player me = client.getLocalPlayer();
+		WorldView top = client.getTopLevelWorldView();
+		LocalPoint here = me == null ? null : me.getLocalLocation();
+		if (here == null || top == null)
+		{
+			return null;
+		}
+		boolean aboard = here.getWorldView() != WorldView.TOPLEVEL;
+		if (aboard)
+		{
+			WorldEntity vessel = top.worldEntities().byIndex(here.getWorldView());
+			here = vessel == null ? null : vessel.transformToMainWorld(here);
+			if (here == null)
+			{
+				return null;
+			}
+		}
+		WorldPoint at = WorldPoint.fromLocalInstance(client, here);
+		boolean inWilderness = client.getVarbitValue(VarbitID.INSIDE_WILDERNESS) == 1;
+		Widget level = inWilderness ? client.getWidget(InterfaceID.PvpIcons.WILDERNESSLEVEL) : null;
+		Set<WorldType> world = client.getWorldType();
+		return new Location(at.getX(), at.getY(), at.getPlane(), top.isInstance(), aboard, inWilderness,
+			level == null || level.isHidden() ? 0 : shownLevel(level.getText()),
+			client.getVarbitValue(VarbitID.PVP_AREA_CLIENT) == 1, pvpWorld(world),
+			world != null && world.contains(WorldType.HIGH_RISK));
+	}
+
 	/** Client thread. */
 	private ItemLine line(String slot, int id, long quantity)
 	{
@@ -435,6 +630,39 @@ final class GameData implements GameDataTools.Game
 			diaries.add(new Diary(r.name, done));
 		}
 		return diaries;
+	}
+
+	/**
+	 * The level in the game's "Level: 23", or 0 for anything else: on a PvP world, say, the same spot shows the combat
+	 * levels that can attack instead. Read from the start, since RuneLite's Combat Level plugin adds a line after it.
+	 */
+	static int shownLevel(String text)
+	{
+		Matcher m = text == null ? null : SHOWN_LEVEL.matcher(text);
+		return m != null && m.lookingAt() ? Integer.parseInt(m.group(1)) : 0;
+	}
+
+	/**
+	 * What kind of world lets players attack each other outside the Wilderness, or null for an ordinary one: PvP worlds,
+	 * and Deadman worlds, where everyone outside the safe zones is fair game (as RuneLite's
+	 * {@link WorldType#isPvpWorld} has it). A High Risk world is only a PvP world when it's marked PvP as well: worlds
+	 * like 365 are High Risk but not PvP, and are as safe as any other outside the Wilderness.
+	 */
+	static String pvpWorld(Set<WorldType> types)
+	{
+		if (types == null)
+		{
+			return null;
+		}
+		if (types.contains(WorldType.DEADMAN))
+		{
+			return DEADMAN_WORLD;
+		}
+		if (!types.contains(WorldType.PVP))
+		{
+			return null;
+		}
+		return types.contains(WorldType.HIGH_RISK) ? "a High Risk PvP world" : "a PvP world";
 	}
 
 	/** "Weapon" for WEAPON. */
@@ -582,6 +810,310 @@ final class GameData implements GameDataTools.Game
 		}
 		out.append("\nCompleted ").append(done).append(" of ").append(tiers).append(" tiers.");
 		return out.toString();
+	}
+
+	/**
+	 * Where the player is, in words the assistant can work with: the place, a landmark if one is close, which floor, and
+	 * then, always, what the game says about whether other players can attack them there. That last part is never left
+	 * out, even where the answer is no: a missing warning would read as "safe", and where AI Chat can't be sure (a safe
+	 * zone on a PvP world), it says so instead. No coordinates: see {@link Location}.
+	 */
+	static String locationText(Location at)
+	{
+		String name = AreaNames.at(at.x, at.y);
+		StringBuilder out = new StringBuilder("Place: ");
+		if (name != null)
+		{
+			out.append(name);
+			String spot = spot(name, at.x, at.y);
+			if (spot != null)
+			{
+				out.append(", near ").append(spot);
+			}
+		}
+		else if (at.inWilderness)
+		{
+			// RuneLite names no regions there; the game's own flag says which part of the map this is.
+			out.append("the Wilderness");
+		}
+		else if (at.instanced)
+		{
+			out.append("a private instance AI Chat has no name for (a raid, a boss room, a minigame or a quest scene, "
+				+ "for example)");
+		}
+		else
+		{
+			out.append("somewhere AI Chat has no name for");
+		}
+		String floor = floorText(at, name);
+		if (floor != null)
+		{
+			out.append(" (").append(floor).append(')');
+		}
+		boolean amidWilderness = amidWilderness(at);
+		if (name == null && amidWilderness)
+		{
+			out.append(", inside the Wilderness's borders on the map");
+		}
+		out.append('.');
+		// Not amid the Wilderness: "Edgeville, 110 tiles south" from Ferox Enclave invites a walk across it.
+		if (name == null && !at.inWilderness && !at.instanced && !amidWilderness)
+		{
+			out.append(' ').append(nearestText(at.x, at.y));
+		}
+		if (at.instanced && name != null)
+		{
+			out.append(" This is a private instance (a raid, a boss room or a player-owned house, for example), named "
+				+ "after the area it was copied from.");
+		}
+		out.append(' ').append(dangerText(at));
+		return out.append(" Place names are RuneLite's names for the map's 64-tile regions, so they give the area rather "
+			+ "than the exact spot.").toString();
+	}
+
+	/**
+	 * The landmark to name after the place, or null for none near enough: by its short name in its own region, and by its
+	 * full one from anywhere else, so that "near the bank" always means the bank of the place just named.
+	 */
+	private static String spot(String area, int x, int y)
+	{
+		Spot best = null;
+		int nearest = SPOT_TILES;
+		for (Spot s : SPOTS)
+		{
+			int away = Math.max(Math.abs(s.x - x), Math.abs(s.y - y));
+			if (away <= nearest)
+			{
+				best = s;
+				nearest = away;
+			}
+		}
+		if (best == null)
+		{
+			return null;
+		}
+		return best.area.equals(area) ? best.here : best.elsewhere;
+	}
+
+	/**
+	 * "underground", "one floor up", "aboard a boat", or any of them together; null on the ground, which goes unsaid. No
+	 * floor in a private instance: the floor read there is the template's, which needn't be the one the player is on
+	 * (a player-owned house's ground floor, say), and it hasn't been checked in the game.
+	 */
+	private static String floorText(Location at, String name)
+	{
+		List<String> parts = new ArrayList<>();
+		if (layer(at.y) == UNDERGROUND && !at.instanced && !UNDERWATER.equals(name))
+		{
+			parts.add("underground");
+		}
+		if (at.plane > 0 && !at.instanced)
+		{
+			parts.add(at.plane == 1 ? "one floor up" : at.plane == 2 ? "two floors up" : "three floors up");
+		}
+		if (at.aboard)
+		{
+			parts.add("aboard a boat");
+		}
+		return parts.isEmpty() ? null : String.join(", ", parts);
+	}
+
+	/** Which part of the map's numbering a tile is in: see {@link #SURFACE_TOP_Y} and {@link #UNDERGROUND_Y}. */
+	private static int layer(int y)
+	{
+		return y >= UNDERGROUND_Y ? UNDERGROUND : y >= SURFACE_TOP_Y ? SET_APART : SURFACE;
+	}
+
+	/**
+	 * For somewhere without a name: the nearest named region and which way it lies, but only on the same layer of the
+	 * map and within {@link #NEAREST_TILES}. Past that, or across layers, the numbers stop meaning distance on the
+	 * ground, and a confident "400 tiles south-east of the Motherlode Mine" would send a player the wrong way.
+	 */
+	private static String nearestText(int x, int y)
+	{
+		int layer = layer(y);
+		if (layer == SET_APART)
+		{
+			return "It's in one of the map's areas set apart from the rest, where nothing nearby has a name either.";
+		}
+		String best = null;
+		int nearest = NEAREST_TILES + 1;
+		int east = 0;
+		int north = 0;
+		for (Map.Entry<Integer, String> e : AreaNames.all().entrySet())
+		{
+			int west = (e.getKey() >> 8) << 6;
+			int south = (e.getKey() & 0xFF) << 6;
+			if (layer(south) != layer)
+			{
+				continue;
+			}
+			// How far past the region's edges the tile is: east and north as positive, 0 where it's level with it.
+			int dx = x < west ? x - west : x > west + 63 ? x - (west + 63) : 0;
+			int dy = y < south ? y - south : y > south + 63 ? y - (south + 63) : 0;
+			int away = Math.max(Math.abs(dx), Math.abs(dy));
+			if (away < nearest)
+			{
+				best = e.getValue();
+				nearest = away;
+				east = dx;
+				north = dy;
+			}
+		}
+		if (best == null)
+		{
+			return "Nothing within about " + NEAREST_TILES + " tiles has a name either.";
+		}
+		// Which way the place lies from the player: the opposite of how far past its edges the player is.
+		String way = direction(-east, -north);
+		return "The nearest named place is " + best + ", " + tiles(nearest) + (way == null ? " away" : " " + way) + ".";
+	}
+
+	/** "north", "north-east": which way one spot lies from another, given how far east and north of it it is. */
+	static String direction(int east, int north)
+	{
+		StringBuilder way = new StringBuilder();
+		// Each way is named only where it's more than half of the other: a step north of due east isn't north-east.
+		if (Math.abs(north) * 2 > Math.abs(east))
+		{
+			way.append(north > 0 ? "north" : "south");
+		}
+		if (Math.abs(east) * 2 > Math.abs(north))
+		{
+			way.append(way.length() > 0 ? "-" : "").append(east > 0 ? "east" : "west");
+		}
+		return way.length() == 0 ? null : way.toString();
+	}
+
+	/** "12 tiles", "about 80 tiles": a long way is rounded, the regions it was measured from being rough anyway. */
+	static String tiles(int away)
+	{
+		return away < ROUND_TILES ? count(away, "tile") : "about " + count(Math.round(away / 10.0) * 10, "tile");
+	}
+
+	/**
+	 * Whether other players can attack them here, as the game says: in the Wilderness (and how deep), in another PvP
+	 * area, or on a world where that's true almost everywhere. A "no" is said as plainly as a "yes", and as the game's
+	 * word rather than AI Chat's; where the game's flags can't settle it, the text says so. Where the game says they
+	 * aren't in the Wilderness but the spot is inside its borders on the map (Ferox Enclave, or a flag the game hasn't
+	 * updated yet, as just after logging in), that's said too: the map only ever adds a warning, never takes one away.
+	 */
+	private static String dangerText(Location at)
+	{
+		StringBuilder out = new StringBuilder();
+		if (at.pvpWorld != null)
+		{
+			out.append("World: ").append(at.pvpWorld)
+				.append(", where players can attack each other anywhere outside the safe zones. ");
+			if (!DEADMAN_WORLD.equals(at.pvpWorld))
+			{
+				// From the OSRS Wiki's Wilderness page, on PvP worlds: outside a safe zone counts as level 15
+				// Wilderness, inside the Wilderness 15 is added to its own level, and what happens on death still goes
+				// by the actual Wilderness level. Not said of Deadman worlds, whose rules are their own.
+				out.append("On a PvP world, anywhere outside a safe zone counts as level 15 Wilderness for who can attack "
+					+ "whom, and in the Wilderness 15 is added to its own level (level 20 acts as level 35), though what's "
+					+ "lost on death still goes by the Wilderness's own level. ");
+			}
+		}
+		else if (at.highRisk)
+		{
+			out.append("World: a High Risk world, which isn't a PvP world. ");
+		}
+		if (at.highRisk)
+		{
+			out.append("On High Risk worlds the Protect Item prayer doesn't work, and a player killed by another player "
+				+ "loses all their items. ");
+		}
+		if (at.inWilderness)
+		{
+			out.append("In the Wilderness: yes, ").append(levelText(at)).append(". Other players can attack them here.");
+		}
+		else if (amidWilderness(at))
+		{
+			out.append("In the Wilderness: the game doesn't count this spot as Wilderness (a safe zone such as Ferox "
+				+ "Enclave, or the game hasn't updated yet), but it's inside the Wilderness's borders on the map: the "
+				+ "Wilderness is all around it, so leaving this spot can mean entering it, where other players can attack "
+				+ "them. ");
+			if (at.pvpArea)
+			{
+				out.append("The game marks this spot as a PvP area, though: other players can attack them here.");
+			}
+			else if (at.pvpWorld != null)
+			{
+				out.append("The game doesn't mark this spot as a PvP area, which on a PvP world usually means a safe "
+					+ "zone, but AI Chat can't confirm that, so don't assume they're safe from other players.");
+			}
+			else
+			{
+				out.append("The game doesn't mark this spot as a PvP area either.");
+			}
+		}
+		else if (at.pvpArea)
+		{
+			out.append("In the Wilderness: no, but the game marks this spot as a PvP area. Other players can attack them "
+				+ "here.");
+		}
+		else if (at.pvpWorld != null)
+		{
+			out.append("In the Wilderness: no. The game doesn't mark this spot as a PvP area, which on a PvP world "
+				+ "usually means a safe zone, but AI Chat can't confirm that, so don't assume they're safe from other "
+				+ "players.");
+		}
+		else
+		{
+			out.append("In the Wilderness: no, and the game doesn't mark this spot as a PvP area.");
+		}
+		return out.toString();
+	}
+
+	/**
+	 * Whether the game says the player isn't in the Wilderness while the spot is inside its borders on the map: see
+	 * {@link #WILDERNESS}. Not in a private instance, whose coordinates are its template's, not where the player is.
+	 */
+	private static boolean amidWilderness(Location at)
+	{
+		if (at.inWilderness || at.instanced)
+		{
+			return false;
+		}
+		for (int[] box : WILDERNESS)
+		{
+			if (at.x >= box[0] && at.x <= box[1] && at.y >= box[2] && at.y <= box[3])
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/** The level as the game shows it; failing that, worked out from the tile and said to be; failing that, unknown. */
+	private static String levelText(Location at)
+	{
+		if (at.shownLevel > 0)
+		{
+			return "level " + at.shownLevel + " as the game shows it";
+		}
+		int worked = wildernessLevel(at.y);
+		if (worked > 0)
+		{
+			return "about level " + worked + ", worked out from where they are (the game's own figure wasn't on screen)";
+		}
+		return "at a level AI Chat couldn't read";
+	}
+
+	/**
+	 * The Wilderness level worked out from how far north a tile is: eight tiles to a level, from y 3520 on the surface
+	 * and y 9920 in the dungeons below. Only ever the number, for when the game's own figure can't be read; whether the
+	 * player is in the Wilderness at all is the game's to say. Some parts read differently in the game, so the text calls
+	 * it "about". 0 outside both bands.
+	 */
+	private static int wildernessLevel(int y)
+	{
+		if (y >= 3520 && y < 4000)
+		{
+			return (y - 3520) / 8 + 1;
+		}
+		return y >= 9920 && y < 10400 ? (y - 9920) / 8 + 1 : 0;
 	}
 
 	/**

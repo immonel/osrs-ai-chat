@@ -49,7 +49,8 @@ their own order rather than lay it out themselves at a moment of their choosing.
   the saved chats are opened, brought back, saved and deleted, with a stand-in disk.
 - `LookupToolsTest`: the Wiki and GE price tools, against a stand-in Wiki and canned prices. `GameDataTest` and
   `GameDataToolsTest`: writing up the player's items, Slayer task and diaries, and when the game-data tools share.
-  `CharacterInfoTest`: the character note.
+  `LocationTest`: what get_location reads (with a stand-in client) and says: the place, the floor, and whether the
+  game says the player can be attacked there. `CharacterInfoTest`: the character note.
 - `MarkdownTest` and `MessageViewTest`: reading replies' Markdown, and drawing it off screen (headless): alignment,
   the width a bubble hugs, links and tooltips, tables (drawn as tables or cards, copied as text). `TableViewTest`: how
   a table's columns share the width, and when it turns into cards. `StackLayoutTest`: the transcript's layout, bubbles that hug their text
@@ -81,8 +82,10 @@ their own order rather than lay it out themselves at a moment of their choosing.
   provider as the settings describe it. `ConnectionTester`: asking for the provider's model list, for "Test
   connection" and for the model picker. `ConnectionCheck`: what the list says, and what the picker offers.
 - `ToolBox`: the tools that go with a request. `LookupTools` and `WikiClient`: Wiki search and pages, GE prices.
-  `GameDataTools` and `GameData`: the player's equipment, inventory, bank, Slayer task and diaries.
-  `CharacterInfo`: the character note.
+  `GameDataTools` and `GameData`: the player's equipment, inventory, bank, Slayer task and diaries, and where they
+  are. `AreaNames`: RuneLite's names for the map's regions, copied from its Discord plugin (its notice is in
+  `THIRD-PARTY-NOTICES`, and in `src/main/resources/META-INF` so it ships in the jar). `CharacterInfo`: the character
+  note.
 - `AiChatPanel` (the sidebar: header, banner, transcript, composer, kept in step with the plugin through its `Host`),
   `MessageRow` (one message: the player's bubble, a reply with Copy and Retry, a note, an error), `Composer` (the input
   box, model picker and Send/Stop button), `ModelPicker` (the model's name next to Send, and its menu), `Banner`,

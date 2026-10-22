@@ -287,11 +287,24 @@ public interface AiChatConfig extends Config
 	}
 
 	@ConfigItem(
+		keyName = "shareLocation",
+		name = "Share where you are",
+		description = "Let the assistant look at where you're standing when a question needs it: the name of the area (and a landmark if one is close; where the area has no name, the nearest one that does, with roughly how far and which way), whether you're upstairs, underground, on a boat or in an instance, and whether other players can attack you there (the Wilderness and its level, or being inside its borders where the game says you aren't in it, as in Ferox Enclave; other PvP areas; PvP and High Risk worlds). Never your exact coordinates. Each look is listed with the reply. Off by default.",
+		warning = "This feature submits your IP address and where your character is standing (the name of the area, or of the nearest named one with roughly how far and which way, and whether you're in the Wilderness or another PvP area) to the AI provider you choose when the assistant looks at it: a 3rd-party server not controlled or verified by RuneLite developers.",
+		section = PRIVACY,
+		position = 2
+	)
+	default boolean shareLocation()
+	{
+		return false;
+	}
+
+	@ConfigItem(
 		keyName = "rememberChats",
 		name = "Save chat history",
 		description = "Keep your chats when RuneLite closes, saved on this computer in .runelite/plugin-data/osrs-ai-chat (the latest 200 messages of each, and older ones still sent to the assistant). Turning this off deletes the saved copy; chats then last only while RuneLite is open.",
 		section = PRIVACY,
-		position = 2
+		position = 3
 	)
 	default boolean rememberChats()
 	{
