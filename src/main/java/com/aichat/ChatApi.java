@@ -19,6 +19,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import okhttp3.Call;
 import okhttp3.MediaType;
+import org.slf4j.LoggerFactory;
 
 /** An AI provider: send the conversation so far, get back one reply or one error. */
 interface ChatApi
@@ -541,7 +542,9 @@ interface ChatApi
 	 * Runs the tool calls of one reply at the same time and hands back their results in the same order once all are
 	 * in, on whichever thread finished last. {@code inputs}: null for a call whose arguments couldn't be read; it isn't
 	 * run, and the model is told why. Calls beyond {@link #MAX_TOOL_CALLS} aren't run either. A runner that breaks its
-	 * promise (throws, or answers twice) can't stall the reply.
+	 * promise by answering twice, or by throwing anything at all (an Error too, such as a NoSuchMethodError after a
+	 * RuneLite update), can't stall the reply: a second answer is ignored, a call that throws before answering ends
+	 * with an error result, and the calls after it still run. Only a call its runner never answers is left waiting.
 	 */
 	static void runTools(ToolRunner runner, List<String> names, List<JsonObject> inputs, Consumer<List<ToolResult>> done)
 	{
@@ -596,8 +599,11 @@ interface ChatApi
 				{
 					runner.run(name, input, one);
 				}
-				catch (RuntimeException e)
+				catch (Throwable t)
 				{
+					// An Error too, and it isn't passed on: this runs on the provider's OkHttp thread, which would drop the
+					// answer without a word to the listener, and the calls after this one would never start.
+					LoggerFactory.getLogger(ChatApi.class).error("tool {} failed", name, t);
 					one.accept(ToolResult.error("The tool " + name + " failed. Answer without it."));
 				}
 			}

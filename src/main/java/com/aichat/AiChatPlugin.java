@@ -845,6 +845,15 @@ public class AiChatPlugin extends Plugin
 					// Send the message without it rather than leave the chat waiting forever.
 					log.debug("couldn't read character info", e);
 				}
+				catch (Throwable t)
+				{
+					// An Error: a RuneLite update changed a method this calls, or an assertion failed (they're on in
+					// the developer client). Nothing times this read out, so the message goes now, without the
+					// details, or never. Then the Error goes on to RuneLite, which logs it and carries on, as it does
+					// for any other; throwing skips the done below, so it's told only once.
+					done.accept(null);
+					throw t;
+				}
 				done.accept(context);
 			});
 		}

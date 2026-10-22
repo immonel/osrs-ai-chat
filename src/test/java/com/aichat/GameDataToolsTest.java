@@ -51,6 +51,11 @@ public class GameDataToolsTest
 		RuntimeException failure;
 		final AtomicInteger reads = new AtomicInteger();
 		volatile String readOn;
+		/**
+		 * Thrown by a read instead of an exception: what a RuneLite update that changed a method AI Chat calls throws,
+		 * or a failed assertion in the developer client.
+		 */
+		Error error;
 
 		private void read()
 		{
@@ -59,6 +64,10 @@ public class GameDataToolsTest
 			if (failure != null)
 			{
 				throw failure;
+			}
+			if (error != null)
+			{
+				throw error;
 			}
 		}
 
@@ -284,6 +293,60 @@ public class GameDataToolsTest
 		assertEquals("Reading the game failed inside AI Chat. Answer without it.", e.result.content);
 		assertNotEquals(CLIENT_THREAD, e.thread);
 		assertEquals(Collections.singletonList("Couldn't read your equipment"), activity);
+	}
+
+	/** What the stand-in for RuneLite's client thread caught from the work queued on it. */
+	private final List<Throwable> clientThreadCaught = new CopyOnWriteArrayList<>();
+
+	/**
+	 * Queues work on the stand-in client thread as RuneLite's does: whatever the work throws, it logs (here, keeps) and
+	 * carries on with the next.
+	 */
+	private void likeRuneLite(Runnable r)
+	{
+		client.execute(() ->
+		{
+			try
+			{
+				r.run();
+			}
+			catch (Throwable t)
+			{
+				clientThreadCaught.add(t);
+			}
+		});
+	}
+
+	@Test
+	public void anErrorFromTheGameStillEndsTheCall() throws Exception
+	{
+		game.error = new NoSuchMethodError("net.runelite.api.Client.getVarbitValue(I)I");
+		Ended e = run(tools(this::likeRuneLite, GameDataTools.READ_TIMEOUT_MILLIS), "get_slayer_task", new JsonObject());
+		assertTrue(e.result.error);
+		assertEquals("Reading the game failed inside AI Chat. Answer without it.", e.result.content);
+		assertNotEquals(CLIENT_THREAD, e.thread);
+		assertEquals(Collections.singletonList("Couldn't read your Slayer task"), activity);
+		// RuneLite still gets the Error, and logs it as it would any other.
+		client.submit(() -> { }).get(5, TimeUnit.SECONDS);
+		assertEquals(Collections.singletonList(game.error), clientThreadCaught);
+	}
+
+	@Test
+	public void anErrorAfterTheTimeLimitDoesntEndTheCallAgain() throws Exception
+	{
+		game.error = new AssertionError("scripts are not reentrant");
+		// The client thread doesn't get to the read in time: held here, so the time limit ends the call first.
+		List<Runnable> queued = new CopyOnWriteArrayList<>();
+		Ended e = run(tools(queued::add, 100), "get_slayer_task", new JsonObject());
+		assertTrue(e.result.content, e.result.content.startsWith("The game didn't answer in time"));
+
+		// It gets there after all, and the read throws: nothing more ends, and RuneLite still gets the Error.
+		likeRuneLite(queued.get(0));
+		client.submit(() -> { }).get(5, TimeUnit.SECONDS);
+		executor.submit(() -> { }).get(5, TimeUnit.SECONDS);
+		assertEquals(1, e.times.get());
+		assertEquals(Collections.singletonList("Couldn't read your Slayer task: the game didn't answer"), activity);
+		assertEquals(Collections.singletonList(game.error), clientThreadCaught);
 	}
 
 	@Test

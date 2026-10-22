@@ -162,6 +162,40 @@ public class ChatApiTest
 	}
 
 	@Test
+	public void anErrorFromAToolEndsOnlyItsCall()
+	{
+		// What a tool throws after a RuneLite update changed a method it calls: ge_price calls RuneLite's ItemManager here,
+		// on the provider's thread.
+		List<String> ran = new ArrayList<>();
+		List<List<ChatApi.ToolResult>> ended = new ArrayList<>();
+		ChatApi.runTools((name, input, done) ->
+		{
+			ran.add(name);
+			switch (name)
+			{
+				case "ge_price":
+					throw new NoSuchMethodError("net.runelite.client.game.ItemManager.search(Ljava/lang/String;)Ljava/util/List;");
+				case "get_equipment":
+					done.accept(ChatApi.ToolResult.ok("equipment"));
+					throw new AssertionError("scripts are not reentrant");
+				default:
+					done.accept(ChatApi.ToolResult.ok("page"));
+			}
+		}, Arrays.asList("ge_price", "get_equipment", "wiki_page"),
+			Arrays.asList(new JsonObject(), new JsonObject(), new JsonObject()), ended::add);
+		// The calls after it still run, and the reply carries on, once.
+		assertEquals(Arrays.asList("ge_price", "get_equipment", "wiki_page"), ran);
+		assertEquals(1, ended.size());
+		List<ChatApi.ToolResult> r = ended.get(0);
+		assertTrue(r.get(0).error);
+		assertEquals("The tool ge_price failed. Answer without it.", r.get(0).content);
+		// One that answered before it threw keeps its answer.
+		assertFalse(r.get(1).error);
+		assertEquals("equipment", r.get(1).content);
+		assertEquals("page", r.get(2).content);
+	}
+
+	@Test
 	public void onlySoManyToolCallsRunAtOnce()
 	{
 		List<String> ran = new CopyOnWriteArrayList<>();
