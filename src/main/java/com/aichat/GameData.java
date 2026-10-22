@@ -1,10 +1,14 @@
 package com.aichat;
 
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.function.IntFunction;
 import java.util.function.IntUnaryOperator;
 import net.runelite.api.Client;
 import net.runelite.api.EquipmentInventorySlot;
@@ -12,6 +16,8 @@ import net.runelite.api.GameState;
 import net.runelite.api.Item;
 import net.runelite.api.ItemComposition;
 import net.runelite.api.ItemContainer;
+import net.runelite.api.Quest;
+import net.runelite.api.QuestState;
 import net.runelite.api.events.ItemContainerChanged;
 import net.runelite.api.gameval.DBTableID;
 import net.runelite.api.gameval.InventoryID;
@@ -22,15 +28,43 @@ import net.runelite.client.game.ItemManager;
 
 /**
  * The player's own account, for the game-data tools: what they wear and carry, their bank as last seen, their Slayer
- * task and their achievement diaries. Only ever their own: nothing about where they are, what's around them, or other
- * players. Reading happens on the client thread, where the game's data lives, and gives plain values; writing those
- * up for the model is separate (static, any thread), so it can be tested without a game.
+ * task, their achievement diaries and their quests. Only ever their own: nothing about where they are, what's around
+ * them, or other players. Reading happens on the client thread, where the game's data lives, and gives plain values;
+ * writing those up for the model is separate (static, any thread), so it can be tested without a game.
  */
 final class GameData implements GameDataTools.Game
 {
 	static final int INVENTORY_SLOTS = 28;
 	/** Bank items listed per call: a big bank would otherwise be tens of thousands of tokens. */
 	static final int BANK_LINES = 300;
+	/**
+	 * Quests listed per call. Only a safety bound, well above the 214 the client knows of: the list is in the client's
+	 * order, the newest quests last, so a bound any nearer would quietly leave those out of "every quest". All of them
+	 * come to some 7,000 characters, asked for, against the bank's tens of thousands.
+	 */
+	static final int QUEST_LINES = 400;
+	/**
+	 * The filters that pick a state rather than a name, as {@link GameDataTools} offers them to the model, and the
+	 * words each quest's state is written in. Compared by {@link #questKey}, so "In-progress" is understood too.
+	 */
+	static final String QUESTS_IN_PROGRESS = "in progress";
+	static final String QUESTS_INCOMPLETE = "incomplete";
+	static final String QUESTS_NOT_STARTED = "not started";
+	static final String QUESTS_COMPLETED = "completed";
+	/**
+	 * Other words a model writes for {@link #QUESTS_COMPLETED}, read as that state rather than as part of a name (no
+	 * quest's name has any of them in it). "Started" isn't one: it could mean in progress, or in progress or completed.
+	 */
+	private static final List<String> COMPLETED_TOO = List.of("complete", "finished", "done");
+	/**
+	 * The type column of the game's quest table ({@link DBTableID.Quest#COL_TYPE}) for a miniquest. The quest list's own
+	 * "hide miniquests" setting hides the rows with 1 ([proc,questlist_hide_quest]). In the game's data the rows it names
+	 * miniquest_ have 1 and its quest_ rows 0, as do Recipe for Disaster's parts (its subquest_ rows, which name it in
+	 * their parent_quest column instead).
+	 */
+	static final int MINIQUEST_TYPE = 1;
+	/** Whole words only, and only the numerals quest names use: the "X" of "X Marks the Spot" stays a letter. */
+	private static final Map<String, String> ROMAN = Map.of("i", "1", "ii", "2", "iii", "3", "iv", "4");
 	/** A boss task names its boss in a second table. From SlayerPlugin ([proc,helper_slayer_current_assignment]). */
 	private static final int BOSS_TASK = 98;
 
@@ -153,6 +187,28 @@ final class GameData implements GameDataTools.Game
 			this.area = area;
 			this.points = points;
 			this.streak = streak;
+		}
+	}
+
+	/** One quest and how far the player has got with it. */
+	static final class QuestLine
+	{
+		/** As the quest list names it ("Dragon Slayer II"). */
+		final String name;
+		final QuestState state;
+		/** A miniquest, by the game's quest table; false when that can't be read. */
+		final boolean miniquest;
+
+		QuestLine(String name, QuestState state)
+		{
+			this(name, state, false);
+		}
+
+		QuestLine(String name, QuestState state, boolean miniquest)
+		{
+			this.name = name;
+			this.state = state;
+			this.miniquest = miniquest;
 		}
 	}
 
@@ -377,6 +433,18 @@ final class GameData implements GameDataTools.Game
 		return diaries(client::getVarbitValue);
 	}
 
+	/**
+	 * Every quest the client knows, with the player's state for each, and which are miniquests by the game's quest
+	 * table. Each state runs a game script, so this is only safe where no other script is running: queued on the client
+	 * thread, never inside one (see {@link GameDataTools}).
+	 */
+	@Override
+	public List<QuestLine> quests()
+	{
+		return quests(q -> q.getState(client), row -> client.getDBRowConfig(row).getTableID(),
+			row -> client.getDBTableField(row, DBTableID.Quest.COL_TYPE, 0));
+	}
+
 	/** Client thread. */
 	private ItemLine line(String slot, int id, long quantity)
 	{
@@ -435,6 +503,45 @@ final class GameData implements GameDataTools.Game
 			diaries.add(new Diary(r.name, done));
 		}
 		return diaries;
+	}
+
+	/**
+	 * Every quest the client knows, from a state reader and two readers of the game's data: the table a row is in, and
+	 * the quest table's type column. A quest's id is its row in that table, the row {@link Quest#getState} hands the
+	 * game's quest status script.
+	 */
+	static List<QuestLine> quests(Function<Quest, QuestState> state, IntUnaryOperator table, IntFunction<Object[]> type)
+	{
+		List<QuestLine> quests = new ArrayList<>();
+		for (Quest q : Quest.values())
+		{
+			quests.add(new QuestLine(q.getName(), state.apply(q), miniquest(q.getId(), table, type)));
+		}
+		return quests;
+	}
+
+	/**
+	 * Whether the quest table's row says miniquest; false when the row isn't in that table or says nothing readable. The
+	 * game checks a row's table the same way before it reads a quest from it ([proc,quest_is_valid]): another table's
+	 * row has its own columns, and its type column could hold a 1 that means something else.
+	 */
+	private static boolean miniquest(int row, IntUnaryOperator table, IntFunction<Object[]> type)
+	{
+		Object[] value;
+		try
+		{
+			if (table.applyAsInt(row) != DBTableID.Quest.ID)
+			{
+				// Gone from the game's data after an update, or another table's row: still listed, only without the mark.
+				return false;
+			}
+			value = type.apply(row);
+		}
+		catch (RuntimeException e)
+		{
+			return false;
+		}
+		return value != null && value.length > 0 && value[0] instanceof Integer && (Integer) value[0] == MINIQUEST_TYPE;
 	}
 
 	/** "Weapon" for WEAPON. */
@@ -582,6 +689,257 @@ final class GameData implements GameDataTools.Game
 		}
 		out.append("\nCompleted ").append(done).append(" of ").append(tiers).append(" tiers.");
 		return out.toString();
+	}
+
+	/**
+	 * The quests the model asked about, with the player's state for each: the ones whose names match {@code filter}
+	 * (see {@link #questKey}), the ones in a state when the filter names one ({@link #QUESTS_IN_PROGRESS},
+	 * {@link #QUESTS_INCOMPLETE}, {@link #QUESTS_NOT_STARTED} or {@link #QUESTS_COMPLETED}) or several ("completed/in
+	 * progress", "in progress, not started"), or every quest when it's null. How many are completed, in progress and not
+	 * started comes first whatever was asked for, so a filter that matched nothing still answers something. Miniquests
+	 * are marked as such.
+	 */
+	static String questText(List<QuestLine> quests, String filter)
+	{
+		int completed = 0;
+		int started = 0;
+		for (QuestLine q : quests)
+		{
+			completed += q.state == QuestState.FINISHED ? 1 : 0;
+			started += q.state == QuestState.IN_PROGRESS ? 1 : 0;
+		}
+		// The client's list has the miniquests and Recipe for Disaster's parts in it too, where the game counts quests
+		// on their own: said, so the model doesn't take these totals for the game's.
+		StringBuilder out = new StringBuilder("The player's quests: ").append(number(completed))
+			.append(" of ").append(number(quests.size())).append(" completed, ").append(number(started))
+			.append(" in progress, ").append(number(quests.size() - completed - started))
+			.append(" not started. These counts take in miniquests and each part of Recipe for Disaster, so they won't "
+				+ "match the game's own quest count.");
+
+		Picked picked = filter == null ? null : pickedStates(filter);
+		String key = "";
+		if (picked == null)
+		{
+			key = filter == null ? "" : questKey(filter);
+			picked = picked(key);
+		}
+		List<QuestLine> matching = new ArrayList<>();
+		for (QuestLine q : quests)
+		{
+			if (matches(q, picked, key))
+			{
+				matching.add(q);
+			}
+		}
+		if (matching.isEmpty())
+		{
+			return out.append('\n').append(nothingMatched(picked, filter)).toString();
+		}
+		out.append('\n').append(questHeading(picked, filter, matching.size())).append(':');
+		for (int i = 0; i < matching.size() && i < QUEST_LINES; i++)
+		{
+			QuestLine q = matching.get(i);
+			out.append("\n- ").append(q.name).append(q.miniquest ? " (miniquest)" : "").append(": ")
+				.append(questStateText(q.state));
+		}
+		if (matching.size() > QUEST_LINES)
+		{
+			out.append("\n...and ").append(count(matching.size() - QUEST_LINES, "more quest"))
+				.append(" not listed. Ask again with a filter for the quests the question is about.");
+		}
+		return out.toString();
+	}
+
+	/** The same words the state filters use, so what the model reads is what it can ask for. */
+	private static String questStateText(QuestState state)
+	{
+		if (state == QuestState.FINISHED)
+		{
+			return QUESTS_COMPLETED;
+		}
+		return state == QuestState.IN_PROGRESS ? QUESTS_IN_PROGRESS : QUESTS_NOT_STARTED;
+	}
+
+	/**
+	 * A quest's name, or the model's filter, as the two are matched: lower case, with "&" as "and", roman numerals as
+	 * digits, and only letters and digits kept, so the spaces between words go too ("Fairy tale" finds "Fairytale"). A
+	 * filter in other words than the game's ("Romeo and Juliet", "Dragon Slayer 2", "Another Slice of HAM", a curly
+	 * apostrophe) would otherwise miss, and each miss costs the reply a round of look-ups. Anything after a "/" is left
+	 * out: the Wiki names a quest's parts and guides that way ("Recipe for Disaster/Mountain Dwarf", "Dragon Slayer
+	 * II/Quick guide"), so a subpage title finds the quest it belongs to, or every part of Recipe for Disaster. (State
+	 * words on both sides of a "/" are read before this, by {@link #pickedStates}.)
+	 */
+	static String questKey(String text)
+	{
+		int slash = text.indexOf('/');
+		String words = (slash < 0 ? text : text.substring(0, slash)).toLowerCase(Locale.ROOT)
+			.replace("&", " and ")
+			// Dropped rather than split on, so "Cook's" is one word and never leaves a stray "s" or "i" behind.
+			.replaceAll("['‘’ʼ`]", "");
+		StringBuilder key = new StringBuilder();
+		for (String word : words.split("[^\\p{L}\\p{N}]+"))
+		{
+			key.append(ROMAN.getOrDefault(word, word));
+		}
+		return key.toString();
+	}
+
+	/**
+	 * What a filter asks for: the quests in some states, part of a name, or every quest when there's no filter. Every
+	 * set of states has one, so state words put together ("completed/in progress") are written up as one ask.
+	 */
+	private enum Picked
+	{
+		EVERY(QuestState.IN_PROGRESS, QuestState.NOT_STARTED, QuestState.FINISHED),
+		IN_PROGRESS(QuestState.IN_PROGRESS),
+		INCOMPLETE(QuestState.IN_PROGRESS, QuestState.NOT_STARTED),
+		NOT_STARTED(QuestState.NOT_STARTED),
+		COMPLETED(QuestState.FINISHED),
+		COMPLETED_OR_IN_PROGRESS(QuestState.FINISHED, QuestState.IN_PROGRESS),
+		COMPLETED_OR_NOT_STARTED(QuestState.FINISHED, QuestState.NOT_STARTED),
+		NAME();
+
+		/** The states picked; none for a name. */
+		final Set<QuestState> states;
+
+		Picked(QuestState... states)
+		{
+			this.states = states.length == 0 ? EnumSet.noneOf(QuestState.class) : EnumSet.of(states[0], states);
+		}
+	}
+
+	/**
+	 * From the filter's {@link #questKey}, so a state is understood however it's written ("In-progress", "not started",
+	 * "Done"). A filter with nothing left to match on, such as "?", is every quest.
+	 */
+	private static Picked picked(String key)
+	{
+		if (key.isEmpty())
+		{
+			return Picked.EVERY;
+		}
+		if (key.equals(questKey(QUESTS_IN_PROGRESS)))
+		{
+			return Picked.IN_PROGRESS;
+		}
+		if (key.equals(questKey(QUESTS_INCOMPLETE)))
+		{
+			return Picked.INCOMPLETE;
+		}
+		if (key.equals(questKey(QUESTS_NOT_STARTED)))
+		{
+			return Picked.NOT_STARTED;
+		}
+		if (key.equals(questKey(QUESTS_COMPLETED)))
+		{
+			return Picked.COMPLETED;
+		}
+		for (String word : COMPLETED_TOO)
+		{
+			if (key.equals(questKey(word)))
+			{
+				return Picked.COMPLETED;
+			}
+		}
+		return Picked.NAME;
+	}
+
+	/**
+	 * State words between "/" or "," ("completed/in progress", "in progress, not started"): the quests in any of those
+	 * states. One state word with a stray "/" or "," on either side is that state. Null for anything with a name in it,
+	 * such as a Wiki subpage title ("Recipe for Disaster/Mountain Dwarf", which {@link #questKey} reads), or with
+	 * nothing to match on.
+	 */
+	private static Picked pickedStates(String filter)
+	{
+		Set<QuestState> states = EnumSet.noneOf(QuestState.class);
+		int parts = 0;
+		for (String part : filter.split("[/,]"))
+		{
+			String key = questKey(part);
+			if (key.isEmpty())
+			{
+				continue;
+			}
+			Picked one = picked(key);
+			if (one == Picked.NAME)
+			{
+				return null;
+			}
+			states.addAll(one.states);
+			parts++;
+		}
+		if (parts == 0)
+		{
+			return null;
+		}
+		for (Picked p : Picked.values())
+		{
+			if (p != Picked.NAME && p.states.equals(states))
+			{
+				return p;
+			}
+		}
+		return null;
+	}
+
+	private static boolean matches(QuestLine quest, Picked picked, String key)
+	{
+		if (picked == Picked.NAME)
+		{
+			return quest.name != null && questKey(quest.name).contains(key);
+		}
+		return picked == Picked.EVERY || picked.states.contains(quest.state);
+	}
+
+	/** The line over the list: what it holds, and how many. */
+	private static String questHeading(Picked picked, String filter, int matching)
+	{
+		String many = count(matching, "quest");
+		switch (picked)
+		{
+			case IN_PROGRESS:
+				return "The " + many + " they've started and not finished";
+			case INCOMPLETE:
+				return "The " + many + " they haven't finished";
+			case NOT_STARTED:
+				return "The " + many + " they haven't started";
+			case COMPLETED:
+				return "The " + many + " they've completed";
+			case COMPLETED_OR_IN_PROGRESS:
+				return "The " + many + " they've completed or started";
+			case COMPLETED_OR_NOT_STARTED:
+				return "The " + many + " they've completed or haven't started";
+			case NAME:
+				return "The " + many + " matching \"" + filter + "\"";
+			default:
+				return "Every quest";
+		}
+	}
+
+	/** Nothing matched: what that says about the account, or what to try instead of a name that isn't used. */
+	private static String nothingMatched(Picked picked, String filter)
+	{
+		switch (picked)
+		{
+			case IN_PROGRESS:
+				return "They have no quest in progress.";
+			case INCOMPLETE:
+				return "They've completed every quest.";
+			case NOT_STARTED:
+				return "They've started every quest.";
+			case COMPLETED:
+				return "They haven't completed a quest yet.";
+			case COMPLETED_OR_IN_PROGRESS:
+				return "They haven't started a quest yet.";
+			case COMPLETED_OR_NOT_STARTED:
+				return "Every one of their quests is in progress.";
+			case NAME:
+				return "No quest name matches \"" + filter + "\". Try a shorter or different filter, or \""
+					+ QUESTS_INCOMPLETE + "\" for every quest they haven't finished.";
+			default:
+				return "No quests could be read, which shouldn't happen; answer without them.";
+		}
 	}
 
 	/**

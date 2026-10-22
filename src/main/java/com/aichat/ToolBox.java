@@ -11,8 +11,8 @@ import lombok.extern.slf4j.Slf4j;
 /**
  * The tools that go with one request, and the runner that answers the model's calls to them: the look-ups first
  * (wiki_search and wiki_page with "Wiki look-ups", ge_price always), then the game-data tools the sharing settings allow
- * (get_equipment, get_inventory, get_bank, get_slayer_task, get_achievement_diaries). Always in that order: the tools
- * are part of the prompt the provider caches, and changing them sends earlier replies as plain text.
+ * (get_equipment, get_inventory, get_bank, get_slayer_task, get_achievement_diaries, get_quests). Always in that order:
+ * the tools are part of the prompt the provider caches, and changing them sends earlier replies as plain text.
  */
 @Slf4j
 final class ToolBox implements ChatApi.ToolRunner
@@ -30,7 +30,10 @@ final class ToolBox implements ChatApi.ToolRunner
 
 		/**
 		 * {@code shareItems}, {@code shareCharacter}: whether the settings allow sharing right now, AI requests
-		 * included; read on the tools' own threads.
+		 * included; read on the tools' own threads. {@code clientThread} always queues the work it's given
+		 * (ClientThread.invokeLater, not invoke, which runs it straight away when called on the client thread, which
+		 * could be from inside a script): reading a quest state runs a game script, which can't run inside another
+		 * one. Tool calls arrive on the providers' threads today, so this is a safeguard.
 		 */
 		Parts(WikiClient wiki, LookupTools.Prices prices, GameDataTools.Game game, Consumer<Runnable> clientThread,
 			ScheduledExecutorService executor, BooleanSupplier shareItems, BooleanSupplier shareCharacter)

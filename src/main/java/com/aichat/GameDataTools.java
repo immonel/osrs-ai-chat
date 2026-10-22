@@ -16,9 +16,9 @@ import lombok.extern.slf4j.Slf4j;
 
 /**
  * The tools that read the player's own account, offered only with the settings that share it: equipment, inventory
- * and bank with "Share items and gear", Slayer task and achievement diaries with "Share character details". Made for one
- * reply: every call reads the game on the client thread, writes the answer up off it, and ends with one line for the
- * panel saying what was shared ("Shared your equipment"), told to {@code activity} just before the result goes back.
+ * and bank with "Share items and gear", Slayer task, achievement diaries and quests with "Share character details". Made
+ * for one reply: every call reads the game on the client thread, writes the answer up off it, and ends with one line for
+ * the panel saying what was shared ("Shared your equipment"), told to {@code activity} just before the result goes back.
  */
 @Slf4j
 final class GameDataTools implements ChatApi.ToolRunner
@@ -28,10 +28,11 @@ final class GameDataTools implements ChatApi.ToolRunner
 	static final String GET_BANK = "get_bank";
 	static final String GET_SLAYER_TASK = "get_slayer_task";
 	static final String GET_ACHIEVEMENT_DIARIES = "get_achievement_diaries";
+	static final String GET_QUESTS = "get_quests";
 
 	/** The client thread runs queued work every frame, also on the login screen; this is in case it can't. */
 	static final long READ_TIMEOUT_MILLIS = 5000;
-	private static final int MAX_SEARCH = 100;
+	private static final int MAX_TEXT = 100;
 	private static final String FAILED = "Reading the game failed inside AI Chat. Answer without it.";
 	private static final String ITEMS_SETTING = "Share items and gear";
 	/**
@@ -67,10 +68,21 @@ final class GameDataTools implements ChatApi.ToolRunner
 		GameData.SlayerTask slayerTask();
 
 		List<GameData.Diary> diaries();
+
+		/**
+		 * Every quest with the player's state for it, and whether it's a miniquest. Reading a state runs a game script,
+		 * which can't run inside another one: see {@link GameDataTools#clientThread} for how the reads stay out of them.
+		 */
+		List<GameData.QuestLine> quests();
 	}
 
 	private final Game game;
-	/** Runs work on the client thread: ClientThread.invoke in the game. */
+	/**
+	 * Queues work for the client thread: ClientThread.invokeLater in the game, not invoke. invoke runs its work straight
+	 * away when it's called on the client thread, which could be from inside a script, and reading a quest state runs a
+	 * game script, which can't run inside another one. Tool calls arrive on the providers' threads today, where invoke
+	 * queues anyway, so this is a safeguard rather than a fix; the plugin's readCharacter makes the same choice.
+	 */
 	private final Consumer<Runnable> clientThread;
 	private final ScheduledExecutorService executor;
 	private final BooleanSupplier shareItems;
@@ -103,7 +115,7 @@ final class GameDataTools implements ChatApi.ToolRunner
 	static boolean handles(String name)
 	{
 		return GET_EQUIPMENT.equals(name) || GET_INVENTORY.equals(name) || GET_BANK.equals(name)
-			|| GET_SLAYER_TASK.equals(name) || GET_ACHIEVEMENT_DIARIES.equals(name);
+			|| GET_SLAYER_TASK.equals(name) || GET_ACHIEVEMENT_DIARIES.equals(name) || GET_QUESTS.equals(name);
 	}
 
 	/**
@@ -139,6 +151,16 @@ final class GameDataTools implements ChatApi.ToolRunner
 			specs.add(new ChatApi.ToolSpec(GET_ACHIEVEMENT_DIARIES,
 				"Which achievement diary tiers (easy, medium, hard, elite) the player has completed in each region.",
 				schema(new JsonObject())));
+			JsonObject quests = new JsonObject();
+			quests.add("filter", property("string", "Optional: part of a quest's name, e.g. \"dragon slayer\" or "
+				+ "\"fremennik\" (capitals, punctuation, \"&\" for \"and\" and roman numerals for digits don't matter); or "
+				+ "a state: \"" + GameData.QUESTS_IN_PROGRESS + "\", \"" + GameData.QUESTS_NOT_STARTED + "\", \""
+				+ GameData.QUESTS_COMPLETED + "\", or \"" + GameData.QUESTS_INCOMPLETE + "\" for every quest they haven't "
+				+ "completed. Leave it out for every quest; a filter is better when the question is about particular ones."));
+			specs.add(new ChatApi.ToolSpec(GET_QUESTS,
+				"Which quests the player has completed, which they're in the middle of, and which they haven't started, "
+					+ "for the quests the filter picks. Every answer also says how many they've completed in all.",
+				schema(quests)));
 		}
 		return specs;
 	}
@@ -175,7 +197,7 @@ final class GameDataTools implements ChatApi.ToolRunner
 			}
 			else if (GET_BANK.equals(name))
 			{
-				String search = search(input);
+				String search = text(input, "search");
 				long now = System.currentTimeMillis();
 				readItems(report, "bank", game::bank, bank -> bankOutcome(bank, search, now));
 			}
@@ -187,6 +209,11 @@ final class GameDataTools implements ChatApi.ToolRunner
 			{
 				readCharacter(report, "achievement diaries", game::diaries,
 					diaries -> shared("achievement diaries", GameData.diaryText(diaries)));
+			}
+			else if (GET_QUESTS.equals(name))
+			{
+				String filter = text(input, "filter");
+				readCharacter(report, "quests", game::quests, quests -> shared("quests", GameData.questText(quests, filter)));
 			}
 			else
 			{
@@ -258,7 +285,7 @@ final class GameDataTools implements ChatApi.ToolRunner
 		readThenWrite(report, what, read, write);
 	}
 
-	/** Slayer task and diaries: only with "Share character details". */
+	/** Slayer task, diaries and quests: only with "Share character details". */
 	private <T> void readCharacter(Report report, String what, Supplier<T> read, Function<T, Outcome> write)
 	{
 		if (!shareCharacter.getAsBoolean())
@@ -355,10 +382,13 @@ final class GameDataTools implements ChatApi.ToolRunner
 		}
 	}
 
-	/** The bank search the model gave, on one line and capped; null for the whole bank. */
-	private static String search(JsonObject input)
+	/**
+	 * What the model gave for {@code property} (the bank's search, the quest filter), on one line and capped; null when
+	 * it gave nothing, which each tool takes as the whole bank or every quest.
+	 */
+	private static String text(JsonObject input, String property)
 	{
-		JsonElement e = input == null ? null : input.get("search");
+		JsonElement e = input == null ? null : input.get(property);
 		if (e == null || !e.isJsonPrimitive())
 		{
 			return null;
@@ -368,7 +398,7 @@ final class GameDataTools implements ChatApi.ToolRunner
 		{
 			return null;
 		}
-		return s.length() <= MAX_SEARCH ? s : s.substring(0, MAX_SEARCH).trim();
+		return s.length() <= MAX_TEXT ? s : s.substring(0, MAX_TEXT).trim();
 	}
 
 	/** One call's ending: its activity line, then its result, together and only once. */

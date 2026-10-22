@@ -27,9 +27,9 @@ look things up on the OSRS Wiki while it answers. Uses your own API key. Free an
   such as OpenRouter, Groq, or a free model running on your own computer with Ollama or LM Studio
 - **Pick a model next to Send**, from the ones your key can use (or type any name), and check your setup with
   **Test connection** in the **⋯** menu
-- Optional, off by default: share your character (name, account type, levels and quests, and your Slayer task and
-  achievement diaries when a question needs them), and your equipment, inventory and bank, for answers that fit your
-  account
+- Optional, off by default: share your character (name, account type, levels and quest progress, and your Slayer task,
+  achievement diaries and quest states when a question needs them), and your equipment, inventory and bank, for answers
+  that fit your account
 - A busy provider is asked again automatically; a question that failed or was stopped can be sent again with
   **Retry**, and what was shown of its reply stays for you to read
 - Long chats are summarised instead of cut short (see [Long chats](#long-chats))
@@ -80,13 +80,13 @@ there's no server in between.
   ironman), combat and total level, skill levels, quest points, and which quests you've completed or started. Added to
   your first message in a chat and again when something changed (that message says "Sent your character details"; click
   it to see them), and sent along with the rest of that chat; turning the setting off leaves it out again. The assistant
-  can also look up your current Slayer task (with your Slayer points and task streak) and which achievement diaries
-  you've completed, when a question needs them.
+  can also look up your current Slayer task (with your Slayer points and task streak), which achievement diaries you've
+  completed, and which quests you've completed, started or not started yet, when a question needs them.
 - **Only while "Share items and gear" is on:** the assistant can look at your worn equipment, your inventory, and
   your bank as it was the last time you had it open while this setting was on (on the account you're logged in to),
   with Grand Exchange prices, when a question needs them. AI Chat keeps that last look at your bank in memory only,
   and only while this setting and AI Chat itself are on.
-- Character, Slayer, diary and item look-ups only work while you're logged in.
+- Character, Slayer, diary, quest and item look-ups only work while you're logged in.
 - **Sent to the OSRS Wiki while "Wiki look-ups" is on (it is by default):** the search words and page titles the
   assistant looks up, and your IP address, go to oldschool.runescape.wiki. AI Chat adds nothing about your account,
   but the assistant writes the search words itself, from your question and anything you've shared with it, such as
@@ -148,7 +148,7 @@ pick the model in the AI Chat panel, next to Send.
 | ChatGPT | API key / Model | / `gpt-6-luna` | Any OpenAI chat model, for example `gpt-6.1-sol` |
 | Other (OpenAI-compatible) | Base URL / API key / Model | | The service's base URL (usually ending in `/v1`), key if it needs one, and model name |
 | | Thinking | Short (faster) | How long a reasoning model thinks first; *Model default* leaves it to the service |
-| Data & privacy | Share character details | off | Name, account type, levels and quests with your messages; Slayer task and diaries when needed (see Privacy) |
+| Data & privacy | Share character details | off | Name, account type, levels and quest progress with your messages; Slayer task, diaries and quest states when needed (see Privacy) |
 | | Share items and gear | off | Equipment, inventory and bank (as last seen) when needed (see Privacy) |
 | | Save chat history | on | Keep chats when RuneLite closes (saved on this computer) |
 | Notifications & game chat | Notify on reply | on | RuneLite notification when a reply arrives (enable *send when focused* to get it while playing) |

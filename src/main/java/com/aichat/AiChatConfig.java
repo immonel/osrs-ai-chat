@@ -263,7 +263,7 @@ public interface AiChatConfig extends Config
 	@ConfigItem(
 		keyName = "sendCharacter",
 		name = "Share character details",
-		description = "Send your character name, account type (ironman or not), levels and quest progress with your messages, and let the assistant look up your Slayer task and achievement diaries, for answers that fit your account. Off by default.",
+		description = "Send your character name, account type (ironman or not), levels and quest progress with your messages, and let the assistant look up your Slayer task, achievement diaries and quests, for answers that fit your account. Off by default.",
 		warning = "This feature submits your IP address, character name, account type, skill levels, quest progress, Slayer task and achievement diaries with your messages to the AI provider you choose: a 3rd-party server not controlled or verified by RuneLite developers.",
 		section = PRIVACY,
 		position = 0

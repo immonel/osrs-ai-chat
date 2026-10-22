@@ -13,6 +13,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
+import net.runelite.api.QuestState;
 import org.junit.After;
 import org.junit.Test;
 import static org.junit.Assert.assertEquals;
@@ -102,6 +103,16 @@ public class GameDataToolsTest
 			read();
 			return GameData.diaries(id -> 1);
 		}
+
+		@Override
+		public List<GameData.QuestLine> quests()
+		{
+			read();
+			return Arrays.asList(new GameData.QuestLine("Cook's Assistant", QuestState.FINISHED),
+				new GameData.QuestLine("Dragon Slayer I", QuestState.FINISHED),
+				new GameData.QuestLine("Dragon Slayer II", QuestState.IN_PROGRESS),
+				new GameData.QuestLine("Monkey Madness II", QuestState.NOT_STARTED));
+		}
 	}
 
 	private GameDataTools tools(Consumer<Runnable> clientThread, long timeoutMillis)
@@ -151,17 +162,18 @@ public class GameDataToolsTest
 	@Test
 	public void offersOnlyWhatTheSettingsShare()
 	{
-		assertEquals(Arrays.asList("get_equipment", "get_inventory", "get_bank", "get_slayer_task", "get_achievement_diaries"),
-			names(tools().specs()));
+		assertEquals(Arrays.asList("get_equipment", "get_inventory", "get_bank", "get_slayer_task",
+			"get_achievement_diaries", "get_quests"), names(tools().specs()));
 		shareCharacter = false;
 		assertEquals(Arrays.asList("get_equipment", "get_inventory", "get_bank"), names(tools().specs()));
 		shareItems = false;
 		shareCharacter = true;
-		assertEquals(Arrays.asList("get_slayer_task", "get_achievement_diaries"), names(tools().specs()));
+		assertEquals(Arrays.asList("get_slayer_task", "get_achievement_diaries", "get_quests"), names(tools().specs()));
 		shareCharacter = false;
 		assertTrue(tools().specs().isEmpty());
 
-		for (String name : Arrays.asList("get_equipment", "get_inventory", "get_bank", "get_slayer_task", "get_achievement_diaries"))
+		for (String name : Arrays.asList("get_equipment", "get_inventory", "get_bank", "get_slayer_task",
+			"get_achievement_diaries", "get_quests"))
 		{
 			assertTrue(name, GameDataTools.handles(name));
 		}
@@ -184,6 +196,14 @@ public class GameDataToolsTest
 		JsonObject bank = a.get(2).inputSchema.getAsJsonObject("properties").getAsJsonObject("search");
 		assertEquals("string", bank.get("type").getAsString());
 		assertFalse(a.get(2).inputSchema.has("required"));
+		JsonObject quests = a.get(5).inputSchema.getAsJsonObject("properties").getAsJsonObject("filter");
+		assertEquals("string", quests.get("type").getAsString());
+		// The filters the model is told about, so it can ask for a state instead of a name.
+		String how = quests.get("description").getAsString();
+		for (String state : Arrays.asList("in progress", "not started", "completed", "incomplete"))
+		{
+			assertTrue(how, how.contains("\"" + state + "\""));
+		}
 	}
 
 	@Test
@@ -273,6 +293,92 @@ public class GameDataToolsTest
 		assertEquals(Arrays.asList("Searched your bank for \"rune\"", "Shared your bank"), activity);
 		assertEquals("Shared your bank", PanelText.summary(activity).sharing);
 		assertEquals("Searched your bank", PanelText.summary(activity.subList(0, 1)).sharing);
+	}
+
+	/** What the model gives get_quests. */
+	private static JsonObject filter(String filter)
+	{
+		JsonObject input = new JsonObject();
+		input.addProperty("filter", filter);
+		return input;
+	}
+
+	@Test
+	public void sharesTheQuestsTheFilterPicks() throws Exception
+	{
+		Ended e = run(tools(), "get_quests", filter("  Dragon\n"));
+		assertFalse(e.result.error);
+		// How far along the account is comes first whatever was asked for, then the quests that matched.
+		assertTrue(e.result.content, e.result.content.startsWith("The player's quests: 2 of 4 completed, 1 in progress, "
+			+ "1 not started."));
+		assertTrue(e.result.content, e.result.content.contains("\nThe 2 quests matching \"Dragon\":\n"));
+		assertTrue(e.result.content, e.result.content.contains("\n- Dragon Slayer I: completed"));
+		assertTrue(e.result.content, e.result.content.contains("\n- Dragon Slayer II: in progress"));
+		assertFalse(e.result.content, e.result.content.contains("Cook's Assistant"));
+		assertEquals(CLIENT_THREAD, game.readOn);
+		assertNotEquals(CLIENT_THREAD, e.thread);
+		// The panel names it as it names the other character look-ups, and says so even when the answer went nowhere.
+		assertEquals(Collections.singletonList("Shared your quests"), activity);
+		assertEquals("Shared your quests", PanelText.summary(activity).sharing);
+		assertEquals("Read your quests, but didn't share it: the request had stopped",
+			GameDataTools.unshared(activity.get(0)));
+	}
+
+	@Test
+	public void questFiltersPickAStateOrEveryQuest() throws Exception
+	{
+		Ended started = run(tools(), "get_quests", filter("in progress"));
+		assertTrue(started.result.content, started.result.content.endsWith("The 1 quest they've started and not "
+			+ "finished:\n- Dragon Slayer II: in progress"));
+		// However the model capitalises it.
+		Ended incomplete = run(tools(), "get_quests", filter("Incomplete"));
+		assertTrue(incomplete.result.content, incomplete.result.content.endsWith("The 2 quests they haven't finished:"
+			+ "\n- Dragon Slayer II: in progress\n- Monkey Madness II: not started"));
+		Ended untouched = run(tools(), "get_quests", filter("not started"));
+		assertTrue(untouched.result.content, untouched.result.content.endsWith("The 1 quest they haven't started:"
+			+ "\n- Monkey Madness II: not started"));
+		Ended done = run(tools(), "get_quests", filter("completed"));
+		assertTrue(done.result.content, done.result.content.endsWith("The 2 quests they've completed:"
+			+ "\n- Cook's Assistant: completed\n- Dragon Slayer I: completed"));
+		// No filter, and a blank one, are every quest.
+		for (JsonObject input : Arrays.asList(new JsonObject(), filter(" "), null))
+		{
+			Ended all = run(tools(), "get_quests", input);
+			assertTrue(all.result.content, all.result.content.contains("\nEvery quest:\n- Cook's Assistant: completed"));
+			assertTrue(all.result.content, all.result.content.endsWith("\n- Monkey Madness II: not started"));
+		}
+	}
+
+	@Test
+	public void aQuestFilterThatMatchesNothingSaysWhatToTry() throws Exception
+	{
+		Ended e = run(tools(), "get_quests", filter("dargon"));
+		// Not an error: the counts still stand, and the model is told how to ask again.
+		assertFalse(e.result.error);
+		assertTrue(e.result.content, e.result.content.startsWith("The player's quests: 2 of 4 completed"));
+		assertTrue(e.result.content, e.result.content.endsWith("No quest name matches \"dargon\". Try a shorter or "
+			+ "different filter, or \"incomplete\" for every quest they haven't finished."));
+		assertEquals(Collections.singletonList("Shared your quests"), activity);
+	}
+
+	@Test
+	public void questsNeedTheSettingAndThePlayerLoggedIn() throws Exception
+	{
+		shareCharacter = false;
+		Ended off = run(tools(), "get_quests", filter("dragon"));
+		assertTrue(off.result.error);
+		assertEquals("The player hasn't turned on \"" + CHARACTER + "\" in AI Chat's settings, so their quests can't be "
+			+ "read. They can turn it on if they'd like you to see it.", off.result.content);
+
+		shareCharacter = true;
+		game.loggedIn = false;
+		Ended loggedOut = run(tools(), "get_quests", new JsonObject());
+		assertTrue(loggedOut.result.error);
+		assertEquals("The player isn't logged in, so their quests can't be read. Ask them to log in first.",
+			loggedOut.result.content);
+		assertEquals(0, game.reads.get());
+		assertEquals(Arrays.asList("Didn't share your quests: \"" + CHARACTER + "\" is off",
+			"Couldn't share your quests: you're not logged in"), activity);
 	}
 
 	@Test
