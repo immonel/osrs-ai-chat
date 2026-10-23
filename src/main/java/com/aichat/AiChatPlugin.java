@@ -22,6 +22,7 @@ import net.runelite.api.ChatMessageType;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
 import net.runelite.api.events.GameStateChanged;
+import net.runelite.api.events.GameTick;
 import net.runelite.api.events.ItemContainerChanged;
 import net.runelite.api.events.ScriptCallbackEvent;
 import net.runelite.api.gameval.VarClientID;
@@ -146,6 +147,13 @@ public class AiChatPlugin extends Plugin
 	private final Map<String, Set<String>> refusedOptions = new ConcurrentHashMap<>();
 	/** The player's own account, for the game-data tools, with the bank as last seen while AI Chat is on. */
 	private GameData gameData;
+	/** Client thread: whether this session's stats are in, so the client's levels are this player's. */
+	private final SessionStats sessionStats = new SessionStats();
+	/**
+	 * How long a message waits for this session's stats before it goes without the character details. They're in under
+	 * two seconds after a login or hop, so this only matters if the game stops ticking.
+	 */
+	private static final long STATS_WAIT_MILLIS = 5000;
 	/**
 	 * What every request's tools are made from: the OSRS Wiki (which sends nothing while AI requests or Wiki look-ups
 	 * are off), RuneLite's own GE prices, and the player's account.
@@ -248,6 +256,7 @@ public class AiChatPlugin extends Plugin
 			.build();
 		clientToolbar.addNavigation(navButton);
 		keyManager.registerKeyListener(askHotkey);
+		clientThread.invokeLater(sessionStats::startOver);
 		// "Save chat history" may have changed while AI Chat was off, unseen by onConfigChanged: act on it now.
 		saver.apply();
 	}
@@ -322,6 +331,13 @@ public class AiChatPlugin extends Plugin
 		{
 			gameData.itemContainerChanged(e);
 		}
+	}
+
+	/** Client thread. */
+	@Subscribe
+	public void onGameTick(GameTick e)
+	{
+		sessionStats.gameTick();
 	}
 
 	private boolean canShareItems()
@@ -818,15 +834,22 @@ public class AiChatPlugin extends Plugin
 	/**
 	 * Queues {@code read} of the character note on {@code clientThread} and hands what it gives to {@code done} there,
 	 * once, whatever happens: null when the read fails, an Error included, so the message goes without the details
-	 * rather than never. Apart from {@link Requests} so it can be tested without RuneLite's client.
+	 * rather than never. While {@code wait} says so, the read waits for the next frame instead, as ClientThread runs a
+	 * BooleanSupplier again until it returns true. Apart from {@link Requests} so it can be tested without RuneLite's
+	 * client.
 	 */
-	static void readCharacter(Consumer<Runnable> clientThread, Supplier<String> read, Consumer<String> done)
+	static void readCharacter(Consumer<BooleanSupplier> clientThread, BooleanSupplier wait, Supplier<String> read,
+		Consumer<String> done)
 	{
 		clientThread.accept(() ->
 		{
 			String context = null;
 			try
 			{
+				if (wait.getAsBoolean())
+				{
+					return false;
+				}
 				context = read.get();
 			}
 			catch (RuntimeException e)
@@ -844,6 +867,7 @@ public class AiChatPlugin extends Plugin
 				throw t;
 			}
 			done.accept(context);
+			return true;
 		});
 	}
 
@@ -865,9 +889,26 @@ public class AiChatPlugin extends Plugin
 		@Override
 		public void readCharacter(Consumer<String> done)
 		{
+			long until = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(STATS_WAIT_MILLIS);
 			// invokeLater: reading quest states runs a game script, which can't happen inside another one.
 			AiChatPlugin.readCharacter(clientThread::invokeLater,
-				() -> client.getGameState() == GameState.LOGGED_IN ? CharacterInfo.describe(client) : null, done);
+				// Just logged in or hopped: this session's stats are a tick or two away, so the message waits for them
+				// rather than go without the details. LOADING too, which a login passes through.
+				() -> !sessionStats.arrived() && System.nanoTime() - until < 0
+					&& (client.getGameState() == GameState.LOGGED_IN || client.getGameState() == GameState.LOADING),
+				() ->
+				{
+					if (client.getGameState() != GameState.LOGGED_IN)
+					{
+						return null;
+					}
+					if (!sessionStats.arrived())
+					{
+						log.debug("Character details left out: this session's stats weren't in yet");
+						return null;
+					}
+					return CharacterInfo.describe(client);
+				}, done);
 		}
 
 		@Override
@@ -1039,6 +1080,7 @@ public class AiChatPlugin extends Plugin
 	@Subscribe
 	public void onGameStateChanged(GameStateChanged e)
 	{
+		sessionStats.gameStateChanged(e.getGameState());
 		if (e.getGameState() == GameState.LOGGED_IN && !heldEchoes.isEmpty())
 		{
 			for (String[] held : heldEchoes)

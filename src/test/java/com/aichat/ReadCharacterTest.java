@@ -3,6 +3,7 @@ package com.aichat;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import org.junit.Test;
 import static org.junit.Assert.assertEquals;
@@ -12,13 +13,18 @@ public class ReadCharacterTest
 {
 	/** What the stand-in for RuneLite's client thread caught from the work queued on it. */
 	private final List<Throwable> clientThreadCaught = new ArrayList<>();
+	/** Frames the work asked to be run again on, as RuneLite's client thread does until it returns true. */
+	private int framesWaited;
 
-	/** Runs the work at once and, as RuneLite's does, logs (here, keeps) whatever it throws and carries on. */
-	private final Consumer<Runnable> clientThread = r ->
+	/** Runs the work a frame at a time until it's done and, as RuneLite's does, keeps whatever it throws. */
+	private final Consumer<BooleanSupplier> clientThread = r ->
 	{
 		try
 		{
-			r.run();
+			while (!r.getAsBoolean())
+			{
+				framesWaited++;
+			}
 		}
 		catch (Throwable t)
 		{
@@ -31,7 +37,7 @@ public class ReadCharacterTest
 	{
 		Error error = new NoSuchMethodError("net.runelite.api.Client.getLocalPlayer()Lnet/runelite/api/Player;");
 		List<String> sent = new ArrayList<>();
-		AiChatPlugin.readCharacter(clientThread, () ->
+		AiChatPlugin.readCharacter(clientThread, () -> false, () ->
 		{
 			throw error;
 		}, sent::add);
@@ -45,7 +51,7 @@ public class ReadCharacterTest
 	public void aFailedReadSendsTheMessageWithoutTheDetails()
 	{
 		List<String> sent = new ArrayList<>();
-		AiChatPlugin.readCharacter(clientThread, () ->
+		AiChatPlugin.readCharacter(clientThread, () -> false, () ->
 		{
 			throw new IllegalStateException("the game's data wasn't there");
 		}, sent::add);
@@ -57,8 +63,30 @@ public class ReadCharacterTest
 	public void aReadNoteGoesWithTheMessage()
 	{
 		List<String> sent = new ArrayList<>();
-		AiChatPlugin.readCharacter(clientThread, () -> "[Character: Zezima]", sent::add);
+		AiChatPlugin.readCharacter(clientThread, () -> false, () -> "[Character: Zezima]", sent::add);
 		assertEquals(Collections.singletonList("[Character: Zezima]"), sent);
-		assertEquals(Collections.emptyList(), clientThreadCaught);
+		assertEquals(0, framesWaited);
+	}
+
+	/** Just after a login, the read waits for this session's stats rather than send the message without them. */
+	@Test
+	public void itWaitsAFrameAtATimeBeforeReading()
+	{
+		int[] framesLeft = {2};
+		List<String> sent = new ArrayList<>();
+		AiChatPlugin.readCharacter(clientThread, () -> framesLeft[0]-- > 0, () -> "[Character: Zezima]", sent::add);
+		assertEquals(Collections.singletonList("[Character: Zezima]"), sent);
+		assertEquals(2, framesWaited);
+	}
+
+	@Test
+	public void aFailedWaitSendsTheMessageWithoutTheDetails()
+	{
+		List<String> sent = new ArrayList<>();
+		AiChatPlugin.readCharacter(clientThread, () ->
+		{
+			throw new IllegalStateException("no game state");
+		}, () -> "[Character: Zezima]", sent::add);
+		assertEquals(Collections.singletonList(null), sent);
 	}
 }

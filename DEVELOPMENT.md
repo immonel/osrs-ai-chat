@@ -50,6 +50,7 @@ their own order rather than lay it out themselves at a moment of their choosing.
 - `LookupToolsTest`: the Wiki and GE price tools, against a stand-in Wiki and canned prices. `GameDataTest` and
   `GameDataToolsTest`: writing up the player's items, Slayer task and diaries, and when the game-data tools share.
   `CharacterInfoTest`: the character note. `ReadCharacterTest`: the plugin reading it before a message goes.
+  `SessionStatsTest`: when the client's levels are this session's (a few game ticks after a login or hop).
 - `MarkdownTest` and `MessageViewTest`: reading replies' Markdown, and drawing it off screen (headless): alignment,
   the width a bubble hugs, links and tooltips, tables (drawn as tables or cards, copied as text). `TableViewTest`: how
   a table's columns share the width, and when it turns into cards. `StackLayoutTest`: the transcript's layout, bubbles that hug their text
@@ -82,7 +83,8 @@ their own order rather than lay it out themselves at a moment of their choosing.
   connection" and for the model picker. `ConnectionCheck`: what the list says, and what the picker offers.
 - `ToolBox`: the tools that go with a request. `LookupTools` and `WikiClient`: Wiki search and pages, GE prices.
   `GameDataTools` and `GameData`: the player's equipment, inventory, bank, Slayer task and diaries.
-  `CharacterInfo`: the character note.
+  `CharacterInfo`: the character note. `SessionStats`: whether this session's stats are in yet (until then the
+  client may have the last session's levels).
 - `AiChatPanel` (the sidebar: header, banner, transcript, composer, kept in step with the plugin through its `Host`),
   `MessageRow` (one message: the player's bubble, a reply with Copy and Retry, a note, an error), `Composer` (the input
   box, model picker and Send/Stop button), `ModelPicker` (the model's name next to Send, and its menu), `Banner`,
