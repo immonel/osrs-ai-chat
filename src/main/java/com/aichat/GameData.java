@@ -692,6 +692,19 @@ final class GameData implements GameDataTools.Game
 	}
 
 	/**
+	 * How many of {@code all} quests are completed, in progress and not started, in the words both get_quests and the
+	 * character note use, so the two never tell the model different things. The client's list has the miniquests and
+	 * Recipe for Disaster's parts in it too, where the game counts quests on their own: said, so the model doesn't take
+	 * these totals for the game's.
+	 */
+	static String questCounts(int completed, int started, int all)
+	{
+		return number(completed) + " of " + number(all) + " completed, " + number(started) + " in progress, "
+			+ number(all - completed - started) + " not started. These counts take in miniquests and each part of "
+			+ "Recipe for Disaster, so they won't match the game's own quest count.";
+	}
+
+	/**
 	 * The quests the model asked about, with the player's state for each: the ones whose names match {@code filter}
 	 * (see {@link #questKey}), the ones in a state when the filter names one ({@link #QUESTS_IN_PROGRESS},
 	 * {@link #QUESTS_INCOMPLETE}, {@link #QUESTS_NOT_STARTED} or {@link #QUESTS_COMPLETED}) or several ("completed/in
@@ -708,13 +721,8 @@ final class GameData implements GameDataTools.Game
 			completed += q.state == QuestState.FINISHED ? 1 : 0;
 			started += q.state == QuestState.IN_PROGRESS ? 1 : 0;
 		}
-		// The client's list has the miniquests and Recipe for Disaster's parts in it too, where the game counts quests
-		// on their own: said, so the model doesn't take these totals for the game's.
-		StringBuilder out = new StringBuilder("The player's quests: ").append(number(completed))
-			.append(" of ").append(number(quests.size())).append(" completed, ").append(number(started))
-			.append(" in progress, ").append(number(quests.size() - completed - started))
-			.append(" not started. These counts take in miniquests and each part of Recipe for Disaster, so they won't "
-				+ "match the game's own quest count.");
+		StringBuilder out = new StringBuilder("The player's quests: ")
+			.append(questCounts(completed, started, quests.size()));
 
 		Picked picked = filter == null ? null : pickedStates(filter);
 		String key = "";

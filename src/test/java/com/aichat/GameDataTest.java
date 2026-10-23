@@ -557,12 +557,12 @@ public class GameDataTest
 		assertNull(CharacterInfo.accountType(7));
 
 		String s = CharacterInfo.format("Zezima", CharacterInfo.accountType(3), 126, 2277, Arrays.asList("Attack 99", "Sailing 1"),
-			300, Collections.singletonList("Dragon Slayer I"), Collections.emptyList());
+			300, 1, Collections.emptyList(), 206);
 		assertTrue(s, s.startsWith("[Character: Zezima, a hardcore ironman, combat level 126, total level 2277. "
 			+ "Levels: Attack 99, Sailing 1. Quest points: 300."));
 		// An account type the plugin doesn't know yet is left out rather than guessed.
 		String unknown = CharacterInfo.format("Zezima", CharacterInfo.accountType(9), 126, 2277, Collections.emptyList(),
-			0, Collections.emptyList(), Collections.emptyList());
+			0, 0, Collections.emptyList(), 206);
 		assertTrue(unknown, unknown.startsWith("[Character: Zezima, combat level 126,"));
 	}
 }
