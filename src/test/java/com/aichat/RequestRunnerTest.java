@@ -223,6 +223,20 @@ public class RequestRunnerTest
 		{
 			return Collections.emptyList();
 		}
+
+		@Override
+		public GameData.Stats stats()
+		{
+			// Never read: the player isn't logged in. What the game holds before it has sent any levels.
+			return new GameData.Stats(Collections.emptyList(), 0);
+		}
+
+		@Override
+		public boolean statsArrived()
+		{
+			// Not logged in, so no session's stats have come.
+			return false;
+		}
 	}
 
 	/** Runs what's waiting for the EDT, and whatever that queues in turn. */
@@ -406,7 +420,7 @@ public class RequestRunnerTest
 		host.characterRead.accept(null);
 		runEdt();
 		assertEquals(Arrays.asList("ge_price", "get_equipment", "get_inventory", "get_bank", "get_slayer_task",
-			"get_achievement_diaries"), toolNames());
+			"get_achievement_diaries", "get_current_stats"), toolNames());
 		assertNotNull(api.last().toolRunner);
 
 		api.listener().onReply(reply("a", 1, 1));

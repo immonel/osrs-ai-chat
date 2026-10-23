@@ -5,6 +5,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -111,6 +113,37 @@ public class GameDataToolsTest
 			read();
 			return GameData.diaries(id -> 1);
 		}
+
+		/** A wounded player at 20 of 99 hitpoints, with Attack boosted and Herblore drained. */
+		GameData.Stats stats = new GameData.Stats(Arrays.asList(new GameData.SkillLevel("Attack", 103, 99),
+			new GameData.SkillLevel("Hitpoints", 20, 99), new GameData.SkillLevel("Prayer", 44, 70),
+			new GameData.SkillLevel("Magic", 94, 94), new GameData.SkillLevel("Herblore", 71, 78)), 38);
+
+		@Override
+		public GameData.Stats stats()
+		{
+			read();
+			return stats;
+		}
+
+		/** What SessionStats says: this session's stats are in, unless a test says otherwise. */
+		volatile boolean arrived = true;
+		/** The thread {@link #statsArrived} last ran on: SessionStats is client thread only. */
+		volatile String arrivedOn;
+
+		@Override
+		public boolean statsArrived()
+		{
+			// Not a read of the levels: it doesn't count.
+			arrivedOn = Thread.currentThread().getName();
+			return arrived;
+		}
+	}
+
+	/** Runs {@code r} on the stand-in client thread and waits. */
+	private void onClientThread(Runnable r) throws Exception
+	{
+		client.submit(r).get(10, TimeUnit.SECONDS);
 	}
 
 	private GameDataTools tools(Consumer<Runnable> clientThread, long timeoutMillis)
@@ -160,17 +193,20 @@ public class GameDataToolsTest
 	@Test
 	public void offersOnlyWhatTheSettingsShare()
 	{
-		assertEquals(Arrays.asList("get_equipment", "get_inventory", "get_bank", "get_slayer_task", "get_achievement_diaries"),
-			names(tools().specs()));
+		assertEquals(Arrays.asList("get_equipment", "get_inventory", "get_bank", "get_slayer_task",
+			"get_achievement_diaries", "get_current_stats"), names(tools().specs()));
 		shareCharacter = false;
 		assertEquals(Arrays.asList("get_equipment", "get_inventory", "get_bank"), names(tools().specs()));
 		shareItems = false;
 		shareCharacter = true;
-		assertEquals(Arrays.asList("get_slayer_task", "get_achievement_diaries"), names(tools().specs()));
+		// Current stats are the player's own character, so they go with the Slayer task and the diaries.
+		assertEquals(Arrays.asList("get_slayer_task", "get_achievement_diaries", "get_current_stats"),
+			names(tools().specs()));
 		shareCharacter = false;
 		assertTrue(tools().specs().isEmpty());
 
-		for (String name : Arrays.asList("get_equipment", "get_inventory", "get_bank", "get_slayer_task", "get_achievement_diaries"))
+		for (String name : Arrays.asList("get_equipment", "get_inventory", "get_bank", "get_slayer_task",
+			"get_achievement_diaries", "get_current_stats"))
 		{
 			assertTrue(name, GameDataTools.handles(name));
 		}
@@ -222,6 +258,98 @@ public class GameDataToolsTest
 	}
 
 	@Test
+	public void sharesTheLiveStateWithBoostedAndDrainedSkills() throws Exception
+	{
+		Ended e = run(tools(), "get_current_stats", new JsonObject());
+		assertFalse(e.result.error);
+		// What the real levels in the character note can't say: wounded, low on prayer, one boost and one drain.
+		assertTrue(e.result.content, e.result.content.contains("\n- Hitpoints: 20 of 99"));
+		assertTrue(e.result.content, e.result.content.contains("\n- Prayer points: 44 of 70"));
+		assertTrue(e.result.content, e.result.content.contains("\n- Run energy: 38% of full"));
+		assertTrue(e.result.content, e.result.content.contains("\n  - Attack: 103 now, real level 99 (+4)"));
+		assertTrue(e.result.content, e.result.content.contains("\n  - Herblore: 71 now, real level 78 (-7)"));
+		// Only those two: Magic is at its real level, and hitpoints and prayer are the meters above, not boosts.
+		assertFalse(e.result.content, e.result.content.contains("Magic"));
+		assertEquals(2, e.result.content.split("\n  - ", -1).length - 1);
+		// Left out on purpose (some content hides the special attack bar).
+		assertFalse(e.result.content, e.result.content.toLowerCase(Locale.ROOT).contains("special"));
+
+		assertEquals(CLIENT_THREAD, game.readOn);
+		assertNotEquals(CLIENT_THREAD, e.thread);
+		assertEquals(Collections.singletonList("Shared your current state"), activity);
+		assertEquals("Shared your current state", PanelText.summary(activity).sharing);
+	}
+
+	/**
+	 * What get_current_stats says while it waits for this session's levels: something the model can do (it can't wait
+	 * a few seconds), and every way the wait comes about, turning AI Chat on included.
+	 */
+	private static final String NOT_READY = "The player's levels aren't ready yet, so their current state can't be "
+		+ "read. They've only just logged in, changed worlds or turned AI Chat on; this clears within a couple of "
+		+ "seconds. Call get_current_stats once more, or answer without it.";
+	/** The panel's line for it: the game may well have sent the levels, but they can't be shared yet. */
+	private static final String NOT_READY_LINE = "Couldn't share your current state: it wasn't ready yet";
+
+	@Test
+	public void waitsForThisSessionsStatsWithoutReadingAnyLevel() throws Exception
+	{
+		// Just logged in: the client still has the last session's levels, another account's after a switch.
+		game.arrived = false;
+		Ended e = run(tools(), "get_current_stats", new JsonObject());
+		assertTrue(e.result.error);
+		assertEquals(NOT_READY, e.result.content);
+		assertEquals(0, game.reads.get());
+		// Asked where SessionStats lives, as its events are.
+		assertEquals(CLIENT_THREAD, game.arrivedOn);
+		// Nothing was shared, so the line over the reply doesn't say so.
+		assertEquals(null, PanelText.summary(activity).sharing);
+
+		// The stats are in: now it reads, once.
+		game.arrived = true;
+		Ended after = run(tools(), "get_current_stats", new JsonObject());
+		assertFalse(after.result.error);
+		assertTrue(after.result.content, after.result.content.contains("\n- Hitpoints: 20 of 99"));
+		assertEquals(1, game.reads.get());
+		assertEquals(Arrays.asList(NOT_READY_LINE, "Shared your current state"), activity);
+	}
+
+	@Test
+	public void aCallAlreadyQueuedWhenTheSessionChangesWaits() throws Exception
+	{
+		// Asked for just before a hop or an account switch and read just after it: what counts is whether this
+		// session's stats are in when the game is read, on the client thread, not when the call was made.
+		List<Runnable> queued = new CopyOnWriteArrayList<>();
+		CompletableFuture<ChatApi.ToolResult> result = new CompletableFuture<>();
+		tools(queued::add, GameDataTools.READ_TIMEOUT_MILLIS).run("get_current_stats", new JsonObject(),
+			result::complete);
+		assertEquals(1, queued.size());
+		game.arrived = false;
+		onClientThread(queued.get(0));
+		ChatApi.ToolResult r = result.get(10, TimeUnit.SECONDS);
+		assertTrue(r.error);
+		assertEquals(NOT_READY, r.content);
+		assertEquals(0, game.reads.get());
+		assertEquals(CLIENT_THREAD, game.arrivedOn);
+	}
+
+	@Test
+	public void noHitpointsAtAllIsntSharedAsZeros() throws Exception
+	{
+		// A login whose stats didn't come within the ticks, on a RuneLite that has had none since it started: the
+		// ticks let the read through, but every level is 0. Those would be said not to be read, but run energy has
+		// nothing to mark it, and its 0 would be shared as "0% of full".
+		game.stats = new GameData.Stats(Arrays.asList(new GameData.SkillLevel("Attack", 0, 0),
+			new GameData.SkillLevel("Hitpoints", 0, 0), new GameData.SkillLevel("Prayer", 0, 0)), 0);
+		Ended e = run(tools(), "get_current_stats", new JsonObject());
+		assertTrue(e.result.error);
+		assertEquals(NOT_READY, e.result.content);
+		// Read, so it was this check that held it back, not SessionStats.
+		assertEquals(1, game.reads.get());
+		assertEquals(Collections.singletonList(NOT_READY_LINE), activity);
+		assertEquals(null, PanelText.summary(activity).sharing);
+	}
+
+	@Test
 	public void sharesNothingWithTheSettingOff() throws Exception
 	{
 		// Offered earlier in the reply, then turned off: the next call is turned down without reading the game.
@@ -235,9 +363,15 @@ public class GameDataToolsTest
 		shareCharacter = false;
 		Ended slayer = run(tools, "get_slayer_task", new JsonObject());
 		assertTrue(slayer.result.content, slayer.result.content.contains("\"" + CHARACTER + "\""));
+		// The current state is a character detail too: the same setting, and the same way of saying so.
+		Ended stats = run(tools, "get_current_stats", new JsonObject());
+		assertTrue(stats.result.error);
+		assertEquals("The player hasn't turned on \"" + CHARACTER + "\" in AI Chat's settings, so their current state "
+			+ "can't be read. They can turn it on if they'd like you to see it.", stats.result.content);
 		assertEquals(0, game.reads.get());
 		assertEquals(Arrays.asList("Didn't share your bank: \"" + ITEMS + "\" is off",
-			"Didn't share your Slayer task: \"" + CHARACTER + "\" is off"), activity);
+			"Didn't share your Slayer task: \"" + CHARACTER + "\" is off",
+			"Didn't share your current state: \"" + CHARACTER + "\" is off"), activity);
 	}
 
 	@Test
@@ -247,8 +381,14 @@ public class GameDataToolsTest
 		Ended e = run(tools(), "get_inventory", new JsonObject());
 		assertTrue(e.result.error);
 		assertEquals("The player isn't logged in, so their inventory can't be read. Ask them to log in first.", e.result.content);
+		// There's no live state at all on the login screen: no stale levels from the last session.
+		Ended stats = run(tools(), "get_current_stats", new JsonObject());
+		assertTrue(stats.result.error);
+		assertEquals("The player isn't logged in, so their current state can't be read. Ask them to log in first.",
+			stats.result.content);
 		assertEquals(0, game.reads.get());
-		assertEquals(Collections.singletonList("Couldn't share your inventory: you're not logged in"), activity);
+		assertEquals(Arrays.asList("Couldn't share your inventory: you're not logged in",
+			"Couldn't share your current state: you're not logged in"), activity);
 	}
 
 	@Test
@@ -403,6 +543,8 @@ public class GameDataToolsTest
 	{
 		assertEquals("Read your equipment, but didn't share it: the request had stopped",
 			GameDataTools.unshared("Shared your equipment"));
+		assertEquals("Read your current state, but didn't share it: the request had stopped",
+			GameDataTools.unshared("Shared your current state"));
 		// Nothing was shared anyway.
 		String off = "Didn't share your bank: \"" + ITEMS + "\" is off";
 		assertEquals(off, GameDataTools.unshared(off));

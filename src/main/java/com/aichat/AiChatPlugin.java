@@ -79,11 +79,12 @@ public class AiChatPlugin extends Plugin
 		+ "requirements and prices change, so check them with your tools when you have them (wiki_search and wiki_page "
 		+ "read the OSRS Wiki, ge_price gives Grand Exchange prices from RuneLite) rather than relying on memory. When "
 		+ "you used a Wiki page, link it, as https://oldschool.runescape.wiki/w/Page_name. Without the tools, say when "
-		+ "you're unsure and suggest the OSRS Wiki. Tools that read the player's equipment, inventory, bank, Slayer task "
-		+ "or achievement diaries are only offered when the player has chosen to share those; if you have other tools "
-		+ "but not the one you'd need, say which setting would allow it (\"Share items and gear\" or \"Share "
-		+ "character details\"). You can't see or control the game otherwise. If the player has chosen to share their character, "
-		+ "their message starts with a [Character: ...] note with details from the game.";
+		+ "you're unsure and suggest the OSRS Wiki. Tools that read the player's equipment, inventory, bank, Slayer task, "
+		+ "achievement diaries or current state (hitpoints, prayer, run energy, boosts) are only offered when the player "
+		+ "has chosen to share those; if you have other tools but not the one you'd need, say which setting would allow "
+		+ "it (\"Share items and gear\" or \"Share character details\"). You can't see or control the game otherwise. "
+		+ "If the player has chosen to share their character, their message starts with a [Character: ...] note with "
+		+ "details from the game.";
 
 	@Inject
 	private Client client;
@@ -215,7 +216,7 @@ public class AiChatPlugin extends Plugin
 		provider = new ProviderSetup(config);
 		if (gameData == null)
 		{
-			gameData = new GameData(client, itemManager);
+			gameData = new GameData(client, itemManager, sessionStats);
 		}
 		forgetBankUnlessShared();
 		Requests requests = new Requests();

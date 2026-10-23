@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 import net.runelite.api.EquipmentInventorySlot;
 import net.runelite.api.Item;
+import net.runelite.api.Skill;
 import net.runelite.api.gameval.ItemID;
 import net.runelite.api.gameval.VarbitID;
 import org.junit.Test;
@@ -261,6 +262,145 @@ public class GameDataTest
 		assertTrue(text, text.contains("\n- Kourend & Kebos: none done\n"));
 		assertTrue(text, text.contains("\n- Wilderness: none done\n"));
 		assertTrue(text, text.endsWith("\nCompleted 7 of 48 tiers."));
+	}
+
+	private static GameData.SkillLevel skill(String name, int boosted, int real)
+	{
+		return new GameData.SkillLevel(name, boosted, real);
+	}
+
+	/** The rule for which level counts, as every result ends: boosts count for most things, not for equipment. */
+	private static final String WHICH_LEVEL_COUNTS = "\nBoosted levels count for skilling, spells and most quest and "
+		+ "achievement diary skill requirements; wielding or wearing equipment needs the real level, and so do some "
+		+ "other requirements (check the Wiki for a particular one).";
+
+	@Test
+	public void currentStatsSayWhenTheyWereTrueAndHowLongBoostsLast()
+	{
+		GameData.Stats stats = new GameData.Stats(Arrays.asList(skill("Attack", 103, 99), skill("Hitpoints", 20, 99),
+			skill("Prayer", 44, 70), skill("Herblore", 71, 78)), 38);
+		assertEquals("The player's state when this was read. It changes as they play, so for a later question read it again "
+			+ "rather than reuse this."
+			+ "\n- Hitpoints: 20 of 99 (comes back about 1 a minute on its own)"
+			+ "\n- Prayer points: 44 of 70 (doesn't come back on its own)"
+			+ "\n- Run energy: 38% of full"
+			// Not every boost wears off a level a minute: some potions hold or renew theirs.
+			+ "\n- Boosted or drained skills. Most boosts wear off, and drains recover, about 1 level a minute, but some "
+			+ "potions hold or keep renewing theirs instead (check the Wiki for a particular one); which kind a boost is "
+			+ "can't be read here:"
+			+ "\n  - Attack: 103 now, real level 99 (+4)"
+			+ "\n  - Herblore: 71 now, real level 78 (-7)"
+			+ WHICH_LEVEL_COUNTS, GameData.statsText(stats));
+	}
+
+	@Test
+	public void theReaderTakesEverySkillInTheClientsOwnUnits()
+	{
+		// Boosted one above real, so a swap of the two getters would show.
+		GameData.Stats stats = GameData.stats(s -> s.ordinal() + 2, s -> s.ordinal() + 1, 9999);
+		assertEquals(Skill.values().length, stats.skills.size());
+		for (Skill skill : Skill.values())
+		{
+			GameData.SkillLevel read = stats.skills.get(skill.ordinal());
+			assertEquals(skill.getName(), read.name);
+			assertEquals(skill.ordinal() + 2, read.boosted);
+			assertEquals(skill.ordinal() + 1, read.real);
+		}
+		// The client counts run energy in hundredths of a percent; the game shows it rounded down.
+		assertEquals(99, stats.runEnergy);
+		assertEquals(100, GameData.stats(s -> 1, s -> 1, 10_000).runEnergy);
+		assertEquals(0, GameData.stats(s -> 1, s -> 1, 99).runEnergy);
+		String text = GameData.statsText(GameData.stats(s -> 50, s -> 50, 9999));
+		assertTrue(text, text.contains("\n- Run energy: 99% of full\n"));
+	}
+
+	@Test
+	public void hitpointsOffTheirMaximumArentCalledTheOnlyBoost()
+	{
+		// A Saradomin brew takes hitpoints past the maximum, and an altar such as Edgeville Monastery's does prayer;
+		// "117 of 99" alone reads like a mistake, and the line about the other skills mustn't seem to deny it.
+		List<GameData.SkillLevel> brewed = new ArrayList<>();
+		brewed.add(skill("Hitpoints", 117, 99));
+		brewed.add(skill("Prayer", 77, 70));
+		for (String name : new String[]{"Attack", "Strength", "Defence", "Magic", "Herblore"})
+		{
+			brewed.add(skill(name, 99, 99));
+		}
+		String text = GameData.statsText(new GameData.Stats(brewed, 100));
+		// What the extra does next differs (OSRS Wiki): hitpoints wear off like any boost, extra prayer points don't.
+		assertTrue(text, text.contains("\n- Hitpoints: 117 of 99 (boosted above the maximum; comes back down by 1 a minute)"));
+		assertTrue(text, text.contains("\n- Prayer points: 77 of 70 (boosted above the maximum; the extra points stay "
+			+ "until prayers use them)"));
+		assertTrue(text, text.contains("\n- Run energy: 100% of full"));
+		// Not "besides hitpoints and prayer", which read as though those two were boosted.
+		assertTrue(text, text.endsWith("\n- Of the other skills, none is boosted or drained." + WHICH_LEVEL_COUNTS));
+		// Twenty-odd identical pairs would say nothing.
+		assertFalse(text, text.contains("real level 99"));
+	}
+
+	@Test
+	public void emptyMetersAreReadingsNotGaps()
+	{
+		// 0 hitpoints and 0 prayer points left are real, with the maximums there to show it.
+		String text = GameData.statsText(new GameData.Stats(Arrays.asList(skill("Hitpoints", 0, 99), skill("Prayer", 0, 70),
+			skill("Attack", 99, 99)), 0));
+		assertTrue(text, text.contains("\n- Hitpoints: 0 of 99 (comes back about 1 a minute on its own)"));
+		assertTrue(text, text.contains("\n- Prayer points: 0 of 70 (doesn't come back on its own)"));
+		assertTrue(text, text.contains("\n- Run energy: 0% of full"));
+		assertFalse(text, text.contains("not read"));
+	}
+
+	@Test
+	public void aSkillDrainedToZeroIsADrainNotAGap()
+	{
+		// Only a real level of 0 means "not sent yet": a trained skill drained all the way down is still a reading.
+		String text = GameData.statsText(new GameData.Stats(Arrays.asList(skill("Defence", 0, 99), skill("Hitpoints", 99, 99),
+			skill("Prayer", 70, 70)), 100));
+		assertTrue(text, text.contains("\n  - Defence: 0 now, real level 99 (-99)"));
+		assertTrue(text, text.contains("\n- Run energy: 100% of full"));
+		assertFalse(text, text.contains("not read"));
+	}
+
+	@Test
+	public void aPartlyReadSetSaysWhatsMissing()
+	{
+		// Some skills not sent (still on their way after logging in, or one the client knows of that the server never
+		// sends): they're named, never taken as "at its real level", and they don't hide the run energy.
+		GameData.Stats partly = new GameData.Stats(Arrays.asList(skill("Attack", 99, 99), skill("Hitpoints", 99, 99),
+			skill("Prayer", 0, 0), skill("Magic", 94, 94), skill("Herblore", 0, 0)), 61);
+		assertTrue(partly.loaded());
+		String text = GameData.statsText(partly);
+		assertTrue(text, text.contains("\n- Hitpoints: 99 of 99\n"));
+		assertTrue(text, text.contains("\n- Prayer points: not read, because the game hadn't sent it yet"));
+		assertTrue(text, text.contains("\n- Run energy: 61% of full\n"));
+		assertTrue(text, text.contains("\n- Of the other skills that were read, none is boosted or drained."
+			+ "\n- Not read, because the game hadn't sent them yet: Herblore\n"));
+
+		// A boost among the ones that were read is still listed, with what's missing after it.
+		text = GameData.statsText(new GameData.Stats(Arrays.asList(skill("Hitpoints", 99, 99), skill("Strength", 118, 99),
+			skill("Herblore", 0, 0)), 0));
+		assertTrue(text, text.contains("\n- Run energy: 0% of full\n"));
+		assertTrue(text, text.contains("\n  - Strength: 118 now, real level 99 (+19)"
+			+ "\n- Not read, because the game hadn't sent them yet: Herblore\n"));
+	}
+
+	@Test
+	public void theStatsHaveLoadedOnceHitpointsHas()
+	{
+		// The backstop behind SessionStats: hitpoints is sent for every account in every game mode, at level 10 or
+		// more, so with none at all it hasn't come, whatever SessionStats trusted, and the tool says so instead of
+		// sharing a run energy of 0 as fact (see GameDataToolsTest). Whether levels are this session's is SessionStats'
+		// to say, not this.
+		assertFalse(new GameData.Stats(Arrays.asList(skill("Hitpoints", 0, 0), skill("Attack", 0, 0)), 0).loaded());
+		assertFalse("another skill alone isn't enough",
+			new GameData.Stats(Arrays.asList(skill("Attack", 99, 99), skill("Hitpoints", 0, 0)), 0).loaded());
+		assertTrue("one skill never sent doesn't hold it back",
+			new GameData.Stats(Arrays.asList(skill("Hitpoints", 10, 10), skill("Sailing", 0, 0)), 0).loaded());
+		// Even a player on 0 hitpoints has a maximum.
+		assertTrue(new GameData.Stats(Collections.singletonList(skill("Hitpoints", 0, 99)), 0).loaded());
+		// From the reader too: all of the client's skills, hitpoints among them.
+		assertTrue(GameData.stats(s -> 1, s -> 10, 0).loaded());
+		assertFalse(GameData.stats(s -> 0, s -> 0, 0).loaded());
 	}
 
 	@Test

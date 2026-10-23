@@ -6,12 +6,14 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.function.IntUnaryOperator;
+import java.util.function.ToIntFunction;
 import net.runelite.api.Client;
 import net.runelite.api.EquipmentInventorySlot;
 import net.runelite.api.GameState;
 import net.runelite.api.Item;
 import net.runelite.api.ItemComposition;
 import net.runelite.api.ItemContainer;
+import net.runelite.api.Skill;
 import net.runelite.api.events.ItemContainerChanged;
 import net.runelite.api.gameval.DBTableID;
 import net.runelite.api.gameval.InventoryID;
@@ -22,9 +24,10 @@ import net.runelite.client.game.ItemManager;
 
 /**
  * The player's own account, for the game-data tools: what they wear and carry, their bank as last seen, their Slayer
- * task and their achievement diaries. Only ever their own: nothing about where they are, what's around them, or other
- * players. Reading happens on the client thread, where the game's data lives, and gives plain values; writing those
- * up for the model is separate (static, any thread), so it can be tested without a game.
+ * task, their achievement diaries and how they're doing this minute. Only ever their own: nothing about where they
+ * are, what's around them, or other players. Reading happens on the client thread, where the game's data lives, and
+ * gives plain values; writing those up for the model is separate (static, any thread), so it can be tested without a
+ * game.
  */
 final class GameData implements GameDataTools.Game
 {
@@ -66,17 +69,26 @@ final class GameData implements GameDataTools.Game
 			VarbitID.WILDERNESS_DIARY_HARD_COMPLETE, VarbitID.WILDERNESS_DIARY_ELITE_COMPLETE),
 	};
 	private static final String[] TIERS = {"Easy", "Medium", "Hard", "Elite"};
+	/**
+	 * The two skills that are also meters: what's left of them is their boosted level, so they're written up as "20 of
+	 * 99" instead of being listed among the boosted and drained skills.
+	 */
+	private static final String HITPOINTS = Skill.HITPOINTS.getName();
+	private static final String PRAYER = Skill.PRAYER.getName();
 
 	private final Client client;
 	private final ItemManager itemManager;
+	/** The plugin's own, which the character note waits on too: whether the levels the client has are this session's. */
+	private final SessionStats sessionStats;
 	/** The bank as last seen, or null before that. Written on the client thread, read anywhere. */
 	private volatile BankSnapshot bank;
 
 	/** Keep one for as long as RuneLite runs: the bank seen so far would be forgotten with it. */
-	GameData(Client client, ItemManager itemManager)
+	GameData(Client client, ItemManager itemManager, SessionStats sessionStats)
 	{
 		this.client = client;
 		this.itemManager = itemManager;
+		this.sessionStats = sessionStats;
 	}
 
 	// ------------------------------------------------------------------
@@ -166,6 +178,69 @@ final class GameData implements GameDataTools.Game
 		{
 			this.region = region;
 			this.done = done;
+		}
+	}
+
+	/** One skill as the game has it now and as the player trained it: the same number unless something changed it. */
+	static final class SkillLevel
+	{
+		/** The skill's own name, "Attack". */
+		final String name;
+		/** The level the game is going by right now, a boost or a drain included. */
+		final int boosted;
+		/**
+		 * The level the player has trained to. 0 means the client has never been sent it since RuneLite started: every
+		 * skill is at least level 1 once it has, and hitpoints at least 10. Anything else may still be the last
+		 * session's, or another account's after a switch; telling those apart is {@link SessionStats}' job, not this.
+		 */
+		final int real;
+
+		SkillLevel(String name, int boosted, int real)
+		{
+			this.name = name;
+			this.boosted = boosted;
+			this.real = real;
+		}
+	}
+
+	/**
+	 * How the player is doing this minute, as against the levels that go with their messages: wounded or healthy, out
+	 * of prayer or not, boosted or drained. None of it lasts, which is why it's read when it's asked for rather than
+	 * sent along with everything else.
+	 */
+	static final class Stats
+	{
+		/** Every skill in the game's own order; hitpoints and prayer are among them. */
+		final List<SkillLevel> skills;
+		/**
+		 * Run energy as a whole percent of full, rounded down as the game shows it. Nothing marks it as not sent yet: 0
+		 * is a real reading, and it has no event, so {@link SessionStats} can't see it arrive either. It's taken as
+		 * this session's once the levels are, since a login sends it in the same burst; that's likely, not proven.
+		 */
+		final int runEnergy;
+
+		Stats(List<SkillLevel> skills, int runEnergy)
+		{
+			this.skills = skills;
+			this.runEnergy = runEnergy;
+		}
+
+		/**
+		 * Whether the client has a hitpoints level at all: a backstop behind {@link SessionStats#arrived()}, for a
+		 * RuneLite that has had no stats since it started. A level never sent is 0, which {@link GameData#statsText}
+		 * says wasn't read, but run energy has nothing to mark it, and its 0 would go to the model as fact. Every account
+		 * has hitpoints, at level 10 or more.
+		 */
+		boolean loaded()
+		{
+			for (SkillLevel s : skills)
+			{
+				if (HITPOINTS.equals(s.name))
+				{
+					return s.real > 0;
+				}
+			}
+			return false;
 		}
 	}
 
@@ -377,6 +452,25 @@ final class GameData implements GameDataTools.Game
 		return diaries(client::getVarbitValue);
 	}
 
+	/**
+	 * Every skill's levels and the run energy, as the client holds them this tick (see {@link #stats(ToIntFunction,
+	 * ToIntFunction, int)}). Special attack energy is left out on purpose, though the game holds it in a plain varp:
+	 * some content hides the special attack bar, Jagex's rules for third-party clients forbid unhiding it, and whether
+	 * the game is showing it this moment (the minimap orb the player can turn off, a combat tab that isn't always open)
+	 * can't be told reliably from here.
+	 */
+	@Override
+	public Stats stats()
+	{
+		return stats(client::getBoostedSkillLevel, client::getRealSkillLevel, client.getEnergy());
+	}
+
+	@Override
+	public boolean statsArrived()
+	{
+		return sessionStats.arrived();
+	}
+
 	/** Client thread. */
 	private ItemLine line(String slot, int id, long quantity)
 	{
@@ -435,6 +529,23 @@ final class GameData implements GameDataTools.Game
 			diaries.add(new Diary(r.name, done));
 		}
 		return diaries;
+	}
+
+	/**
+	 * Both levels for every skill, so the writing up can say which are boosted or drained, from the client's own
+	 * getters. Hitpoints and prayer need nothing of their own: a skill's boosted level is what the player has left of
+	 * it, which is why 20 of 99 hitpoints is a boosted level of 20. {@code runEnergy} is in the client's units,
+	 * hundredths of a percent.
+	 */
+	static Stats stats(ToIntFunction<Skill> boosted, ToIntFunction<Skill> real, int runEnergy)
+	{
+		List<SkillLevel> levels = new ArrayList<>();
+		// Every skill the client knows, in its own order; Overall isn't one of them any more.
+		for (Skill skill : Skill.values())
+		{
+			levels.add(new SkillLevel(skill.getName(), boosted.applyAsInt(skill), real.applyAsInt(skill)));
+		}
+		return new Stats(levels, runEnergy / 100);
 	}
 
 	/** "Weapon" for WEAPON. */
@@ -582,6 +693,116 @@ final class GameData implements GameDataTools.Game
 		}
 		out.append("\nCompleted ").append(done).append(" of ").append(tiers).append(" tiers.");
 		return out.toString();
+	}
+
+	/**
+	 * What the player can do this minute, which their real levels can't say: someone on 20 of 99 hitpoints is in a very
+	 * different place from someone at full health, and the two look the same in a character note. Only the skills that
+	 * aren't at their real level are listed, since the other twenty-odd would be identical pairs, and how fast each
+	 * kind of number comes back is said, because an answer written around a boost is wrong once it wears off. The
+	 * result is replayed with later turns, so it says when it was true rather than calling itself current.
+	 * <p>
+	 * A level of 0 (never sent) is said to be missing, never left out: it would otherwise read as "at its real level"
+	 * or "no prayer left". For stats read once {@link SessionStats#arrived() this session's are in} and that have
+	 * {@link Stats#loaded() loaded}; run energy is reported then too, so one skill missing besides doesn't hide it.
+	 */
+	static String statsText(Stats stats)
+	{
+		StringBuilder out = new StringBuilder("The player's state when this was read. It changes as they play, so for a "
+			+ "later question read it again rather than reuse this.");
+		// Above the maximum, hitpoints wear off a level a minute like any boost, but extra prayer points stay until
+		// prayers use them.
+		out.append("\n- Hitpoints: ").append(meter(level(stats, HITPOINTS), "comes back about 1 a minute on its own",
+			"comes back down by 1 a minute"));
+		out.append("\n- Prayer points: ").append(meter(level(stats, PRAYER), "doesn't come back on its own",
+			"the extra points stay until prayers use them"));
+		out.append("\n- Run energy: ").append(number(stats.runEnergy)).append("% of full");
+
+		List<String> changed = new ArrayList<>();
+		List<String> unsent = new ArrayList<>();
+		int others = 0;
+		for (SkillLevel s : stats.skills)
+		{
+			// Hitpoints and prayer are the two meters above, boosted or not.
+			if (HITPOINTS.equals(s.name) || PRAYER.equals(s.name))
+			{
+				continue;
+			}
+			others++;
+			if (s.real <= 0)
+			{
+				unsent.add(s.name);
+			}
+			else if (s.boosted != s.real)
+			{
+				int change = s.boosted - s.real;
+				changed.add(s.name + ": " + number(s.boosted) + " now, real level " + number(s.real)
+					+ " (" + (change > 0 ? "+" : "-") + number(Math.abs(change)) + ")");
+			}
+		}
+		if (!changed.isEmpty())
+		{
+			// Some potions hold or renew their boost instead, and nothing here tells which kind a boost is: the model is
+			// told both, and where to look, rather than a list of potions that goes stale.
+			out.append("\n- Boosted or drained skills. Most boosts wear off, and drains recover, about 1 level a minute, "
+				+ "but some potions hold or keep renewing theirs instead (check the Wiki for a particular one); which kind "
+				+ "a boost is can't be read here:");
+			for (String line : changed)
+			{
+				out.append("\n  - ").append(line);
+			}
+		}
+		else if (unsent.isEmpty())
+		{
+			// "Besides hitpoints and prayer" read as though those two were boosted; they're the meters above.
+			out.append("\n- Of the other skills, none is boosted or drained.");
+		}
+		else if (unsent.size() < others)
+		{
+			out.append("\n- Of the other skills that were read, none is boosted or drained.");
+		}
+		if (!unsent.isEmpty())
+		{
+			out.append("\n- Not read, because the game hadn't sent them yet: ").append(String.join(", ", unsent));
+		}
+		out.append("\nBoosted levels count for skilling, spells and most quest and achievement diary skill requirements; "
+			+ "wielding or wearing equipment needs the real level, and so do some other requirements (check the Wiki for "
+			+ "a particular one).");
+		return out.toString();
+	}
+
+	/** The skill by that name, or null when it isn't there. */
+	private static SkillLevel level(Stats stats, String name)
+	{
+		for (SkillLevel s : stats.skills)
+		{
+			if (name.equals(s.name))
+			{
+				return s;
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * "20 of 99" for hitpoints or prayer: what's left, then the maximum, and after it how it comes back when it's below
+	 * the maximum ({@code whenLow}) or what happens to the extra when it's above ({@code whenHigh}). Said to be missing
+	 * when the game hasn't sent the level, so a zero can't read as "none left".
+	 */
+	private static String meter(SkillLevel skill, String whenLow, String whenHigh)
+	{
+		if (skill == null || skill.real <= 0)
+		{
+			return "not read, because the game hadn't sent it yet";
+		}
+		String left = number(skill.boosted) + " of " + number(skill.real);
+		if (skill.boosted > skill.real)
+		{
+			// Brews and some food push hitpoints past the maximum, and some altars and special attacks (the ancient
+			// mace's) do prayer: worth saying, so it doesn't read as a mistake.
+			return left + " (boosted above the maximum; " + whenHigh + ")";
+		}
+		return skill.boosted < skill.real ? left + " (" + whenLow + ")" : left;
 	}
 
 	/**
