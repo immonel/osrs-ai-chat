@@ -210,10 +210,7 @@ public class AiChatPlugin extends Plugin
 		}
 		forgetBankUnlessShared();
 		Requests requests = new Requests();
-		// The game-data tools read through invokeLater, not invoke: invoke runs its work straight away when it's
-		// called on the client thread, which could be from inside a script, and reading a quest state runs a game
-		// script, which can't run inside another one. Tool calls arrive on the providers' threads today, so this is
-		// a safeguard; readCharacter makes the same choice.
+		// invokeLater, not invoke: see GameDataTools' clientThread.
 		tools = new ToolBox.Parts(new WikiClient(okHttpClient, gson, () -> config.aiRequests() && config.wikiLookups()),
 			new LookupTools.RuneLitePrices(itemManager, clientThread, executor, runeLiteConfig::useWikiItemPrices),
 			gameData, clientThread::invokeLater, executor, this::canShareItems, requests::shareCharacter);

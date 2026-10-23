@@ -30,10 +30,8 @@ final class ToolBox implements ChatApi.ToolRunner
 
 		/**
 		 * {@code shareItems}, {@code shareCharacter}: whether the settings allow sharing right now, AI requests
-		 * included; read on the tools' own threads. {@code clientThread} always queues the work it's given
-		 * (ClientThread.invokeLater, not invoke, which runs it straight away when called on the client thread, which
-		 * could be from inside a script): reading a quest state runs a game script, which can't run inside another
-		 * one. Tool calls arrive on the providers' threads today, so this is a safeguard.
+		 * included; read on the tools' own threads. {@code clientThread} always queues the work it's given, never runs
+		 * it straight away (see {@link GameDataTools}).
 		 */
 		Parts(WikiClient wiki, LookupTools.Prices prices, GameDataTools.Game game, Consumer<Runnable> clientThread,
 			ScheduledExecutorService executor, BooleanSupplier shareItems, BooleanSupplier shareCharacter)

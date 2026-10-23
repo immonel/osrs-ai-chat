@@ -1,7 +1,9 @@
 package com.aichat;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.EnumSet;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -10,6 +12,7 @@ import java.util.Set;
 import java.util.function.Function;
 import java.util.function.IntFunction;
 import java.util.function.IntUnaryOperator;
+import java.util.function.Supplier;
 import net.runelite.api.Client;
 import net.runelite.api.EquipmentInventorySlot;
 import net.runelite.api.GameState;
@@ -38,9 +41,9 @@ final class GameData implements GameDataTools.Game
 	/** Bank items listed per call: a big bank would otherwise be tens of thousands of tokens. */
 	static final int BANK_LINES = 300;
 	/**
-	 * Quests listed per call. Only a safety bound, well above the 214 the client knows of: the list is in the client's
-	 * order, the newest quests last, so a bound any nearer would quietly leave those out of "every quest". All of them
-	 * come to some 7,000 characters, asked for, against the bank's tens of thousands.
+	 * Quests listed per call. Only a safety bound, well above the two hundred or so the client knows of: the list is in
+	 * the client's order, the newest quests last, so a bound any nearer would quietly leave those out of "every quest".
+	 * All of them come to some 7,000 characters, asked for, against the bank's tens of thousands.
 	 */
 	static final int QUEST_LINES = 400;
 	/**
@@ -441,7 +444,7 @@ final class GameData implements GameDataTools.Game
 	@Override
 	public List<QuestLine> quests()
 	{
-		return quests(q -> q.getState(client), row -> client.getDBRowConfig(row).getTableID(),
+		return quests(q -> q.getState(client), () -> client.getDBTableRows(DBTableID.Quest.ID),
 			row -> client.getDBTableField(row, DBTableID.Quest.COL_TYPE, 0));
 	}
 
@@ -506,35 +509,42 @@ final class GameData implements GameDataTools.Game
 	}
 
 	/**
-	 * Every quest the client knows, from a state reader and two readers of the game's data: the table a row is in, and
-	 * the quest table's type column. A quest's id is its row in that table, the row {@link Quest#getState} hands the
-	 * game's quest status script.
+	 * Every quest the client knows, from a state reader and two readers of the game's data: the quest table's rows, and
+	 * its type column. A quest's id is its row in that table, the row {@link Quest#getState} hands the game's quest
+	 * status script.
 	 */
-	static List<QuestLine> quests(Function<Quest, QuestState> state, IntUnaryOperator table, IntFunction<Object[]> type)
+	static List<QuestLine> quests(Function<Quest, QuestState> state, Supplier<List<Integer>> questRows,
+		IntFunction<Object[]> type)
 	{
+		Set<Integer> rows;
+		try
+		{
+			List<Integer> read = questRows.get();
+			rows = read == null ? Collections.emptySet() : new HashSet<>(read);
+		}
+		catch (RuntimeException e)
+		{
+			// Every quest is still listed, only none is marked.
+			rows = Collections.emptySet();
+		}
 		List<QuestLine> quests = new ArrayList<>();
 		for (Quest q : Quest.values())
 		{
-			quests.add(new QuestLine(q.getName(), state.apply(q), miniquest(q.getId(), table, type)));
+			quests.add(new QuestLine(q.getName(), state.apply(q), rows.contains(q.getId()) && miniquest(q.getId(), type)));
 		}
 		return quests;
 	}
 
 	/**
-	 * Whether the quest table's row says miniquest; false when the row isn't in that table or says nothing readable. The
-	 * game checks a row's table the same way before it reads a quest from it ([proc,quest_is_valid]): another table's
-	 * row has its own columns, and its type column could hold a 1 that means something else.
+	 * Whether the quest table's row says miniquest; false when it says nothing readable. Only asked of a row in that
+	 * table, as the game checks before it reads a quest from one ([proc,quest_is_valid]): another table's row has its
+	 * own columns, and its type column could hold a 1 that means something else.
 	 */
-	private static boolean miniquest(int row, IntUnaryOperator table, IntFunction<Object[]> type)
+	private static boolean miniquest(int row, IntFunction<Object[]> type)
 	{
 		Object[] value;
 		try
 		{
-			if (table.applyAsInt(row) != DBTableID.Quest.ID)
-			{
-				// Gone from the game's data after an update, or another table's row: still listed, only without the mark.
-				return false;
-			}
 			value = type.apply(row);
 		}
 		catch (RuntimeException e)
@@ -707,10 +717,9 @@ final class GameData implements GameDataTools.Game
 	/**
 	 * The quests the model asked about, with the player's state for each: the ones whose names match {@code filter}
 	 * (see {@link #questKey}), the ones in a state when the filter names one ({@link #QUESTS_IN_PROGRESS},
-	 * {@link #QUESTS_INCOMPLETE}, {@link #QUESTS_NOT_STARTED} or {@link #QUESTS_COMPLETED}) or several ("completed/in
-	 * progress", "in progress, not started"), or every quest when it's null. How many are completed, in progress and not
-	 * started comes first whatever was asked for, so a filter that matched nothing still answers something. Miniquests
-	 * are marked as such.
+	 * {@link #QUESTS_INCOMPLETE}, {@link #QUESTS_NOT_STARTED} or {@link #QUESTS_COMPLETED}), or every quest when it's
+	 * null. How many are completed, in progress and not started comes first whatever was asked for, so a filter that
+	 * matched nothing still answers something. Miniquests are marked as such.
 	 */
 	static String questText(List<QuestLine> quests, String filter)
 	{
@@ -724,13 +733,8 @@ final class GameData implements GameDataTools.Game
 		StringBuilder out = new StringBuilder("The player's quests: ")
 			.append(questCounts(completed, started, quests.size()));
 
-		Picked picked = filter == null ? null : pickedStates(filter);
-		String key = "";
-		if (picked == null)
-		{
-			key = filter == null ? "" : questKey(filter);
-			picked = picked(key);
-		}
+		String key = filter == null ? "" : questKey(filter);
+		Picked picked = picked(key);
 		List<QuestLine> matching = new ArrayList<>();
 		for (QuestLine q : quests)
 		{
@@ -774,8 +778,7 @@ final class GameData implements GameDataTools.Game
 	 * filter in other words than the game's ("Romeo and Juliet", "Dragon Slayer 2", "Another Slice of HAM", a curly
 	 * apostrophe) would otherwise miss, and each miss costs the reply a round of look-ups. Anything after a "/" is left
 	 * out: the Wiki names a quest's parts and guides that way ("Recipe for Disaster/Mountain Dwarf", "Dragon Slayer
-	 * II/Quick guide"), so a subpage title finds the quest it belongs to, or every part of Recipe for Disaster. (State
-	 * words on both sides of a "/" are read before this, by {@link #pickedStates}.)
+	 * II/Quick guide"), so a subpage title finds the quest it belongs to, or every part of Recipe for Disaster.
 	 */
 	static String questKey(String text)
 	{
@@ -792,10 +795,7 @@ final class GameData implements GameDataTools.Game
 		return key.toString();
 	}
 
-	/**
-	 * What a filter asks for: the quests in some states, part of a name, or every quest when there's no filter. Every
-	 * set of states has one, so state words put together ("completed/in progress") are written up as one ask.
-	 */
+	/** What a filter asks for: the quests in some states, part of a name, or every quest when there's no filter. */
 	private enum Picked
 	{
 		EVERY(QuestState.IN_PROGRESS, QuestState.NOT_STARTED, QuestState.FINISHED),
@@ -803,8 +803,6 @@ final class GameData implements GameDataTools.Game
 		INCOMPLETE(QuestState.IN_PROGRESS, QuestState.NOT_STARTED),
 		NOT_STARTED(QuestState.NOT_STARTED),
 		COMPLETED(QuestState.FINISHED),
-		COMPLETED_OR_IN_PROGRESS(QuestState.FINISHED, QuestState.IN_PROGRESS),
-		COMPLETED_OR_NOT_STARTED(QuestState.FINISHED, QuestState.NOT_STARTED),
 		NAME();
 
 		/** The states picked; none for a name. */
@@ -852,45 +850,6 @@ final class GameData implements GameDataTools.Game
 		return Picked.NAME;
 	}
 
-	/**
-	 * State words between "/" or "," ("completed/in progress", "in progress, not started"): the quests in any of those
-	 * states. One state word with a stray "/" or "," on either side is that state. Null for anything with a name in it,
-	 * such as a Wiki subpage title ("Recipe for Disaster/Mountain Dwarf", which {@link #questKey} reads), or with
-	 * nothing to match on.
-	 */
-	private static Picked pickedStates(String filter)
-	{
-		Set<QuestState> states = EnumSet.noneOf(QuestState.class);
-		int parts = 0;
-		for (String part : filter.split("[/,]"))
-		{
-			String key = questKey(part);
-			if (key.isEmpty())
-			{
-				continue;
-			}
-			Picked one = picked(key);
-			if (one == Picked.NAME)
-			{
-				return null;
-			}
-			states.addAll(one.states);
-			parts++;
-		}
-		if (parts == 0)
-		{
-			return null;
-		}
-		for (Picked p : Picked.values())
-		{
-			if (p != Picked.NAME && p.states.equals(states))
-			{
-				return p;
-			}
-		}
-		return null;
-	}
-
 	private static boolean matches(QuestLine quest, Picked picked, String key)
 	{
 		if (picked == Picked.NAME)
@@ -914,10 +873,6 @@ final class GameData implements GameDataTools.Game
 				return "The " + many + " they haven't started";
 			case COMPLETED:
 				return "The " + many + " they've completed";
-			case COMPLETED_OR_IN_PROGRESS:
-				return "The " + many + " they've completed or started";
-			case COMPLETED_OR_NOT_STARTED:
-				return "The " + many + " they've completed or haven't started";
 			case NAME:
 				return "The " + many + " matching \"" + filter + "\"";
 			default:
@@ -938,10 +893,6 @@ final class GameData implements GameDataTools.Game
 				return "They've started every quest.";
 			case COMPLETED:
 				return "They haven't completed a quest yet.";
-			case COMPLETED_OR_IN_PROGRESS:
-				return "They haven't started a quest yet.";
-			case COMPLETED_OR_NOT_STARTED:
-				return "Every one of their quests is in progress.";
 			case NAME:
 				return "No quest name matches \"" + filter + "\". Try a shorter or different filter, or \""
 					+ QUESTS_INCOMPLETE + "\" for every quest they haven't finished.";

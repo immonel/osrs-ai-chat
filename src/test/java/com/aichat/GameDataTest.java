@@ -10,7 +10,6 @@ import net.runelite.api.EquipmentInventorySlot;
 import net.runelite.api.Item;
 import net.runelite.api.Quest;
 import net.runelite.api.QuestState;
-import net.runelite.api.gameval.DBTableID;
 import net.runelite.api.gameval.ItemID;
 import net.runelite.api.gameval.VarbitID;
 import org.junit.Test;
@@ -431,32 +430,9 @@ public class GameDataTest
 	}
 
 	@Test
-	public void stateWordsTogetherPickTheQuestsInAnyOfThem()
+	public void aWikiSubpageTitleFindsTheQuestItBelongsTo()
 	{
-		assertTrue(GameData.questText(someQuests(), "completed/in progress")
-			.endsWith("The 3 quests they've completed or started:\n- Cook's Assistant: completed"
-				+ "\n- Dragon Slayer I: completed\n- Dragon Slayer II: in progress"));
-		assertTrue(GameData.questText(someQuests(), "Completed / not started")
-			.endsWith("The 3 quests they've completed or haven't started:\n- Cook's Assistant: completed"
-				+ "\n- Dragon Slayer I: completed\n- Desert Treasure II - The Fallen Empire: not started"));
-		// Put together into what one filter already asks for, they're written up as that filter is.
-		assertEquals(GameData.questText(someQuests(), "incomplete"), GameData.questText(someQuests(), "in progress, not started"));
-		assertEquals(GameData.questText(someQuests(), "completed"), GameData.questText(someQuests(), "done/finished"));
-		assertEquals(GameData.questText(someQuests(), null),
-			GameData.questText(someQuests(), "completed, in progress, not started"));
-		// One state with a stray separator is that state, on either side.
-		assertEquals(GameData.questText(someQuests(), "completed"), GameData.questText(someQuests(), "completed/"));
-		assertEquals(GameData.questText(someQuests(), "completed"), GameData.questText(someQuests(), "/completed"));
-		assertEquals(GameData.questText(someQuests(), "in progress"), GameData.questText(someQuests(), ", in progress,"));
-		// Separators with nothing between them are no filter at all.
-		assertEquals(GameData.questText(someQuests(), null), GameData.questText(someQuests(), "/,"));
-
-		List<GameData.QuestLine> fresh = Collections.singletonList(quest("Cook's Assistant", QuestState.NOT_STARTED));
-		assertTrue(GameData.questText(fresh, "completed/in progress").endsWith("They haven't started a quest yet."));
-		List<GameData.QuestLine> busy = Collections.singletonList(quest("Cook's Assistant", QuestState.IN_PROGRESS));
-		assertTrue(GameData.questText(busy, "completed, not started").endsWith("Every one of their quests is in progress."));
-
-		// A Wiki subpage title isn't state words: still a name, the part before the "/".
+		// The part before the "/" is the name.
 		assertEquals(GameData.questText(everyQuest(), "Recipe for Disaster"),
 			GameData.questText(everyQuest(), "Recipe for Disaster/Mountain Dwarf").replace("\"Recipe for Disaster/Mountain "
 				+ "Dwarf\"", "\"Recipe for Disaster\""));
@@ -478,26 +454,24 @@ public class GameDataTest
 	public void miniquestsAreReadFromTheGamesQuestTable()
 	{
 		// The table's type column, by each quest's id: 1 for a miniquest. A row that can't be read (gone after a game
-		// update) leaves the quest listed, only unmarked, and so does a row in another table, whatever its type column
-		// holds: the game itself reads a quest's columns only from a row in the quest table.
+		// update) leaves the quest listed, only unmarked, and so does a row that isn't in the quest table, whatever its
+		// type column holds: the game itself reads a quest's columns only from a row in the quest table.
 		Map<Integer, Object[]> types = new HashMap<>();
 		types.put(Quest.MAGE_ARENA_I.getId(), new Object[]{GameData.MINIQUEST_TYPE});
 		types.put(Quest.DRAGON_SLAYER_I.getId(), new Object[]{0});
 		types.put(Quest.SHIELD_OF_ARRAV.getId(), new Object[0]);
 		types.put(Quest.LOST_CITY.getId(), new Object[]{"1"});
 		types.put(Quest.BIOHAZARD.getId(), new Object[]{GameData.MINIQUEST_TYPE});
-		types.put(Quest.PLAGUE_CITY.getId(), new Object[]{GameData.MINIQUEST_TYPE});
-		types.put(Quest.WATERFALL_QUEST.getId(), new Object[]{GameData.MINIQUEST_TYPE});
-		List<GameData.QuestLine> quests = GameData.quests(q -> q == Quest.COOKS_ASSISTANT ? QuestState.FINISHED
-			: QuestState.NOT_STARTED, row ->
+		List<Integer> questRows = new ArrayList<>();
+		for (Quest q : Quest.values())
 		{
-			if (row == Quest.PLAGUE_CITY.getId())
+			if (q != Quest.BIOHAZARD)
 			{
-				throw new IllegalStateException("no table");
+				questRows.add(q.getId());
 			}
-			// Gone from the game's data reads as table -1.
-			return row == Quest.BIOHAZARD.getId() ? 9 : row == Quest.WATERFALL_QUEST.getId() ? -1 : DBTableID.Quest.ID;
-		}, row ->
+		}
+		List<GameData.QuestLine> quests = GameData.quests(q -> q == Quest.COOKS_ASSISTANT ? QuestState.FINISHED
+			: QuestState.NOT_STARTED, () -> questRows, row ->
 		{
 			if (row == Quest.MONKEY_MADNESS_I.getId())
 			{
@@ -514,12 +488,23 @@ public class GameDataTest
 		}
 		assertTrue(byName.get("Mage Arena I").miniquest);
 		for (Quest q : Arrays.asList(Quest.DRAGON_SLAYER_I, Quest.SHIELD_OF_ARRAV, Quest.LOST_CITY, Quest.MONKEY_MADNESS_I,
-			Quest.COOKS_ASSISTANT, Quest.BIOHAZARD, Quest.PLAGUE_CITY, Quest.WATERFALL_QUEST))
+			Quest.COOKS_ASSISTANT, Quest.BIOHAZARD))
 		{
 			assertFalse(q.getName(), byName.get(q.getName()).miniquest);
 		}
 		assertEquals(QuestState.FINISHED, byName.get("Cook's Assistant").state);
 		assertEquals(QuestState.NOT_STARTED, byName.get("Monkey Madness I").state);
+
+		// Without the table's rows, every quest is still listed, only none is marked.
+		List<GameData.QuestLine> unread = GameData.quests(q -> QuestState.NOT_STARTED, () ->
+		{
+			throw new IllegalStateException("no table");
+		}, types::get);
+		assertEquals(Quest.values().length, unread.size());
+		for (GameData.QuestLine q : unread)
+		{
+			assertFalse(q.name, q.miniquest);
+		}
 	}
 
 	@Test
