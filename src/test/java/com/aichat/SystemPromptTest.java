@@ -30,10 +30,11 @@ public class SystemPromptTest
 	@Test
 	public void itExplainsFightsWithoutCallingThemLive()
 	{
-		// Jagex's Third Party Client Guidelines don't allow telling a player mid-fight which prayer to use, when attacks
-		// come or where to stand. A question the player asks, answered like the Wiki would, is fine.
-		assertTrue(AiChatPlugin.SYSTEM_PROMPT.contains("Explaining a fight's strategy, gear and mechanics is fine"));
-		assertTrue(AiChatPlugin.SYSTEM_PROMPT.contains("don't act as a live caller"));
+		// Jagex's Third Party Client Guidelines don't allow a feature that tells a player mid-fight when to switch
+		// prayers, eat or move. Which prayer protects from which attack, asked by the player and answered as the Wiki
+		// would, is fine, and the line mustn't put the assistant off answering that.
+		assertTrue(AiChatPlugin.SYSTEM_PROMPT.contains("don't offer to call one live (when to switch prayers, eat or move)"));
+		assertTrue(AiChatPlugin.SYSTEM_PROMPT.contains("which prayer protects from which attack, as the Wiki does, is fine"));
 	}
 
 	@Test
