@@ -295,6 +295,7 @@ final class GameDataTools implements ChatApi.ToolRunner
 			log.debug("no time limit for reading the game", e);
 		}
 		Future<?> limit = timeout;
+		Runnable failed = () -> report.send(new Outcome("Couldn't read your " + what, ChatApi.ToolResult.error(FAILED)));
 		// A Runnable, so it runs once: a lambda that returned a boolean would be taken as the kind that runs again
 		// every frame until it returns true.
 		Runnable onClientThread = () ->
@@ -314,8 +315,16 @@ final class GameDataTools implements ChatApi.ToolRunner
 			{
 				// The game's data wasn't there to read (a game update, a loading screen).
 				log.warn("couldn't read the player's {}", what, e);
-				handBack(() -> report.send(new Outcome("Couldn't read your " + what, ChatApi.ToolResult.error(FAILED))));
+				handBack(failed);
 				return;
+			}
+			catch (Throwable t)
+			{
+				// An Error: a RuneLite update changed a method this calls, or an assertion failed (they're on in the
+				// developer client). The time limit is off already, so the call ends here or never. Then the Error goes
+				// on to RuneLite, which logs it and carries on with its other work, as it does for any other.
+				handBack(failed);
+				throw t;
 			}
 			handBack(() -> report.write(what, () -> loggedIn ? write.apply(value) : notLoggedIn(what)));
 		};
@@ -330,7 +339,7 @@ final class GameDataTools implements ChatApi.ToolRunner
 			{
 				limit.cancel(false);
 			}
-			report.send(new Outcome("Couldn't read your " + what, ChatApi.ToolResult.error(FAILED)));
+			failed.run();
 		}
 	}
 

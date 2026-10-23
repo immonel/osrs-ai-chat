@@ -49,7 +49,7 @@ their own order rather than lay it out themselves at a moment of their choosing.
   the saved chats are opened, brought back, saved and deleted, with a stand-in disk.
 - `LookupToolsTest`: the Wiki and GE price tools, against a stand-in Wiki and canned prices. `GameDataTest` and
   `GameDataToolsTest`: writing up the player's items, Slayer task and diaries, and when the game-data tools share.
-  `CharacterInfoTest`: the character note.
+  `CharacterInfoTest`: the character note. `ReadCharacterTest`: the plugin reading it before a message goes.
 - `MarkdownTest` and `MessageViewTest`: reading replies' Markdown, and drawing it off screen (headless): alignment,
   the width a bubble hugs, links and tooltips, tables (drawn as tables or cards, copied as text). `TableViewTest`: how
   a table's columns share the width, and when it turns into cards. `StackLayoutTest`: the transcript's layout, bubbles that hug their text
