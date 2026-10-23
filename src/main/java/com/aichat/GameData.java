@@ -1061,7 +1061,11 @@ final class GameData implements GameDataTools.Game
 		}
 		else
 		{
-			out.append("In the Wilderness: no, and the game doesn't mark this spot as a PvP area.");
+			// Said, so the model can answer "can I be attacked here?", but not to be volunteered: asked only where they
+			// are, a player doesn't need telling they're not in the Wilderness. And not as "safe": monsters still attack.
+			out.append("In the Wilderness: no, and the game doesn't mark this spot as a PvP area. Other players can't "
+				+ "attack them here, which isn't worth saying unless they ask about danger or other players; and don't "
+				+ "call it safe, since monsters still can.");
 		}
 		return out.toString();
 	}

@@ -156,7 +156,8 @@ final class GameDataTools implements ChatApi.ToolRunner
 					+ "whether they're upstairs, underground or aboard a boat, and what the game says about other "
 					+ "players attacking them there: the Wilderness and its level, other PvP areas, PvP worlds. Areas "
 					+ "are RuneLite's names for the map's regions, so some spots have none. Use it for anything about "
-					+ "where to go from here, what's nearby, how to get somewhere, or whether it's safe to.",
+					+ "where to go from here, what's nearby, how to get somewhere, or whether other players can attack "
+					+ "them there.",
 				schema(new JsonObject())));
 		}
 		return specs;

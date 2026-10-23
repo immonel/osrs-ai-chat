@@ -417,6 +417,20 @@ public class LocationTest
 		assertFalse(text(at(3185, 3436, 0)), text(at(3185, 3436, 0)).contains("level 15"));
 	}
 
+	/**
+	 * Asked only where they were, a player on Lunar Isle was told they weren't in the Wilderness and were "safe": the "no"
+	 * is there for when they ask, not to be volunteered, and isn't "safe" from monsters. A warning still goes unprompted.
+	 */
+	@Test
+	public void aNoIsntVolunteeredOrCalledSafe()
+	{
+		assertContains("Other players can't attack them here, which isn't worth saying unless they ask about danger or "
+			+ "other players; and don't call it safe, since monsters still can.", at(3185, 3436, 0));
+		String wild = text(wilderness(2943, 3600, 0));
+		assertFalse(wild, wild.contains("isn't worth saying"));
+		assertFalse(wild, wild.contains("don't call it safe"));
+	}
+
 	@Test
 	public void aHighRiskWorldThatIsntPvpIsntCalledOne()
 	{
