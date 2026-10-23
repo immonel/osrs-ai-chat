@@ -54,6 +54,15 @@ final class GameDataTools implements ChatApi.ToolRunner
 	{
 		boolean loggedIn();
 
+		/**
+		 * What the game is busy with when {@link #loggedIn} is false only for a moment, with the player still in the
+		 * game. Null when they really are logged out (the login screen, logging in), and for a game that doesn't say.
+		 */
+		default Busy busy()
+		{
+			return null;
+		}
+
 		List<GameData.ItemLine> equipment();
 
 		GameData.Items inventory();
@@ -308,6 +317,12 @@ final class GameDataTools implements ChatApi.ToolRunner
 			try
 			{
 				loggedIn = game.loggedIn();
+				Busy busy = loggedIn ? null : game.busy();
+				if (busy != null)
+				{
+					handBack(() -> report.write(what, () -> stillLoggedIn(what, busy)));
+					return;
+				}
 				value = loggedIn ? read.get() : null;
 			}
 			catch (RuntimeException e)
@@ -339,6 +354,34 @@ final class GameDataTools implements ChatApi.ToolRunner
 		return new Outcome("Couldn't share your " + what + ": you're not logged in",
 			ChatApi.ToolResult.error("The player isn't logged in, so their " + what + " can't be read. Ask them to log "
 				+ "in first."));
+	}
+
+	/**
+	 * What keeps the game from being read for a moment while the player is still logged in (see {@link Game#busy}).
+	 * Saying they aren't logged in then would have the model ask them to log in in the middle of a world hop.
+	 */
+	enum Busy
+	{
+		/** Loading the map around the player, as when crossing into a new area. */
+		LOADING("loading"),
+		CHANGING_WORLDS("changing worlds"),
+		/** The connection dropped, and the game is trying to get it back. */
+		RECONNECTING("reconnecting");
+
+		/** As in "the game was loading". */
+		final String doing;
+
+		Busy(String doing)
+		{
+			this.doing = doing;
+		}
+	}
+
+	private static Outcome stillLoggedIn(String what, Busy busy)
+	{
+		return new Outcome("Couldn't read your " + what + ": the game was " + busy.doing,
+			ChatApi.ToolResult.error("The game was " + busy.doing + " when this was asked, so the player's " + what
+				+ " couldn't be read. They haven't logged out: try once more, or answer without it."));
 	}
 
 	/** Off the client thread before the reply carries on. */

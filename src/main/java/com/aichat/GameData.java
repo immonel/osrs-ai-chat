@@ -262,6 +262,30 @@ final class GameData implements GameDataTools.Game
 	}
 
 	@Override
+	public GameDataTools.Busy busy()
+	{
+		return busy(client.getGameState());
+	}
+
+	/**
+	 * The states that only last a moment while the player stays logged in: loading the map, a world hop, and the game
+	 * reconnecting after the connection dropped (back in the game if that works, at the login screen if not). Null for
+	 * every other state: logged in, or logged out (the login screen, logging in, the client starting up).
+	 */
+	static GameDataTools.Busy busy(GameState state)
+	{
+		if (state == GameState.LOADING)
+		{
+			return GameDataTools.Busy.LOADING;
+		}
+		if (state == GameState.HOPPING)
+		{
+			return GameDataTools.Busy.CHANGING_WORLDS;
+		}
+		return state == GameState.CONNECTION_LOST ? GameDataTools.Busy.RECONNECTING : null;
+	}
+
+	@Override
 	public List<ItemLine> equipment()
 	{
 		List<ItemLine> lines = new ArrayList<>();

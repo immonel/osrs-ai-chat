@@ -7,6 +7,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import net.runelite.api.EquipmentInventorySlot;
+import net.runelite.api.GameState;
 import net.runelite.api.Item;
 import net.runelite.api.gameval.ItemID;
 import net.runelite.api.gameval.VarbitID;
@@ -291,5 +292,23 @@ public class GameDataTest
 		String unknown = CharacterInfo.format("Zezima", CharacterInfo.accountType(9), 126, 2277, Collections.emptyList(),
 			0, Collections.emptyList(), Collections.emptyList());
 		assertTrue(unknown, unknown.startsWith("[Character: Zezima, combat level 126,"));
+	}
+
+	@Test
+	public void onlyLoadingHoppingAndReconnectingAreAMomentsWait()
+	{
+		assertEquals(GameDataTools.Busy.LOADING, GameData.busy(GameState.LOADING));
+		assertEquals(GameDataTools.Busy.CHANGING_WORLDS, GameData.busy(GameState.HOPPING));
+		assertEquals(GameDataTools.Busy.RECONNECTING, GameData.busy(GameState.CONNECTION_LOST));
+		// The rest are logged in, or logged out for real: the login screen, logging in, the client starting up. A state
+		// a later RuneLite adds counts as logged out too, as every state but LOGGED_IN did before.
+		for (GameState state : GameState.values())
+		{
+			if (state != GameState.LOADING && state != GameState.HOPPING && state != GameState.CONNECTION_LOST)
+			{
+				assertNull(state.name(), GameData.busy(state));
+			}
+		}
+		assertNull(GameData.busy(null));
 	}
 }
