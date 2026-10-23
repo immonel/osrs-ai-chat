@@ -39,7 +39,8 @@ final class RequestRunner
 
 		/**
 		 * Reads the character details to send with a message and hands them to {@code done}, on any thread: null when
-		 * there are none (not logged in, or they couldn't be read).
+		 * there are none (not logged in, this session's stats didn't come in time, or they couldn't be read). Just
+		 * after a login or world hop, that waits a moment for this session's stats.
 		 */
 		void readCharacter(Consumer<String> done);
 
