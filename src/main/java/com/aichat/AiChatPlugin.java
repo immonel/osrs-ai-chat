@@ -14,6 +14,7 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 import javax.inject.Inject;
 import javax.swing.SwingUtilities;
 import lombok.extern.slf4j.Slf4j;
@@ -814,6 +815,38 @@ public class AiChatPlugin extends Plugin
 		}
 	}
 
+	/**
+	 * Queues {@code read} of the character note on {@code clientThread} and hands what it gives to {@code done} there,
+	 * once, whatever happens: null when the read fails, an Error included, so the message goes without the details
+	 * rather than never. Apart from {@link Requests} so it can be tested without RuneLite's client.
+	 */
+	static void readCharacter(Consumer<Runnable> clientThread, Supplier<String> read, Consumer<String> done)
+	{
+		clientThread.accept(() ->
+		{
+			String context = null;
+			try
+			{
+				context = read.get();
+			}
+			catch (RuntimeException e)
+			{
+				// Send the message without it rather than leave the chat waiting forever.
+				log.debug("couldn't read character info", e);
+			}
+			catch (Throwable t)
+			{
+				// An Error: a RuneLite update changed a method this calls, or an assertion failed (they're on in the
+				// developer client). Nothing times this read out, so the message goes now, without the details, or
+				// never. Then the Error goes on to RuneLite, which logs it and carries on, as it does for any other;
+				// throwing skips the done below, so it's told only once.
+				done.accept(null);
+				throw t;
+			}
+			done.accept(context);
+		});
+	}
+
 	/** What {@link RequestRunner} needs from the plugin. Everything but the tools' callbacks runs on the EDT. */
 	private final class Requests implements RequestRunner.Host
 	{
@@ -833,29 +866,8 @@ public class AiChatPlugin extends Plugin
 		public void readCharacter(Consumer<String> done)
 		{
 			// invokeLater: reading quest states runs a game script, which can't happen inside another one.
-			clientThread.invokeLater(() ->
-			{
-				String context = null;
-				try
-				{
-					context = client.getGameState() == GameState.LOGGED_IN ? CharacterInfo.describe(client) : null;
-				}
-				catch (RuntimeException e)
-				{
-					// Send the message without it rather than leave the chat waiting forever.
-					log.debug("couldn't read character info", e);
-				}
-				catch (Throwable t)
-				{
-					// An Error: a RuneLite update changed a method this calls, or an assertion failed (they're on in
-					// the developer client). Nothing times this read out, so the message goes now, without the
-					// details, or never. Then the Error goes on to RuneLite, which logs it and carries on, as it does
-					// for any other; throwing skips the done below, so it's told only once.
-					done.accept(null);
-					throw t;
-				}
-				done.accept(context);
-			});
+			AiChatPlugin.readCharacter(clientThread::invokeLater,
+				() -> client.getGameState() == GameState.LOGGED_IN ? CharacterInfo.describe(client) : null, done);
 		}
 
 		@Override

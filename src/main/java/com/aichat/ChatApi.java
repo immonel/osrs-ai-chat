@@ -603,7 +603,7 @@ interface ChatApi
 				{
 					// An Error too, and it isn't passed on: this runs on the provider's OkHttp thread, which would drop the
 					// answer without a word to the listener, and the calls after this one would never start.
-					LoggerFactory.getLogger(ChatApi.class).error("tool {} failed", name, t);
+					LoggerFactory.getLogger(ChatApi.class).warn("tool {} failed", name, t);
 					one.accept(ToolResult.error("The tool " + name + " failed. Answer without it."));
 				}
 			}
