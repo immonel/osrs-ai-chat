@@ -77,9 +77,9 @@ public class AiChatPlugin extends Plugin
 		+ "requirements and prices change, so check them with your tools when you have them (wiki_search and wiki_page "
 		+ "read the OSRS Wiki, ge_price gives Grand Exchange prices from RuneLite) rather than relying on memory. When "
 		+ "you used a Wiki page, link it, as https://oldschool.runescape.wiki/w/Page_name. Without the tools, say when "
-		+ "you're unsure and suggest the OSRS Wiki. Tools that read the player's equipment, inventory, bank, Slayer task "
-		+ "or achievement diaries are only offered when the player has chosen to share those; if you have other tools "
-		+ "but not the one you'd need, say which setting would allow it (\"Share items and gear\" or \"Share "
+		+ "you're unsure and suggest the OSRS Wiki. Tools that read the player's equipment, inventory, bank, Slayer task, "
+		+ "achievement diaries or unlocked transport are only offered when the player has chosen to share those; if you "
+		+ "have other tools but not the one you'd need, say which setting would allow it (\"Share items and gear\" or \"Share "
 		+ "character details\"). You can't see or control the game otherwise. If the player has chosen to share their character, "
 		+ "their message starts with a [Character: ...] note with details from the game.";
 
@@ -210,9 +210,13 @@ public class AiChatPlugin extends Plugin
 		}
 		forgetBankUnlessShared();
 		Requests requests = new Requests();
+		// The game-data tools read through invokeLater, not invoke: invoke runs its work straight away when it's
+		// called on the client thread, which could be from inside a script, and reading a quest state runs a game
+		// script, which can't run inside another one. Tool calls arrive on the providers' threads today, so this is
+		// a safeguard; readCharacter makes the same choice.
 		tools = new ToolBox.Parts(new WikiClient(okHttpClient, gson, () -> config.aiRequests() && config.wikiLookups()),
 			new LookupTools.RuneLitePrices(itemManager, clientThread, executor, runeLiteConfig::useWikiItemPrices),
-			gameData, clientThread::invoke, executor, this::canShareItems, requests::shareCharacter);
+			gameData, clientThread::invokeLater, executor, this::canShareItems, requests::shareCharacter);
 		runner = new RequestRunner(requests, SwingUtilities::invokeLater, executor);
 		tester = new ConnectionTester(SwingUtilities::invokeLater, () ->
 		{

@@ -1,6 +1,8 @@
 package com.aichat;
 
 import java.util.ArrayList;
+import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -12,6 +14,9 @@ import net.runelite.api.GameState;
 import net.runelite.api.Item;
 import net.runelite.api.ItemComposition;
 import net.runelite.api.ItemContainer;
+import net.runelite.api.Quest;
+import net.runelite.api.QuestState;
+import net.runelite.api.Skill;
 import net.runelite.api.events.ItemContainerChanged;
 import net.runelite.api.gameval.DBTableID;
 import net.runelite.api.gameval.InventoryID;
@@ -22,7 +27,8 @@ import net.runelite.client.game.ItemManager;
 
 /**
  * The player's own account, for the game-data tools: what they wear and carry, their bank as last seen, their Slayer
- * task and their achievement diaries. Only ever their own: nothing about where they are, what's around them, or other
+ * task, their achievement diaries, and what the transport tables need (quest states, a few varbits and varps, their
+ * Magic level). Only ever their own: nothing about where they are, what's around them, or other
  * players. Reading happens on the client thread, where the game's data lives, and gives plain values; writing those
  * up for the model is separate (static, any thread), so it can be tested without a game.
  */
@@ -375,6 +381,34 @@ final class GameData implements GameDataTools.Game
 	public List<Diary> diaries()
 	{
 		return diaries(client::getVarbitValue);
+	}
+
+	/**
+	 * Only what the transport tables name, since each quest state runs a game script: about twenty of those, where
+	 * the character note reads every quest. The items come from the same reads as get_equipment, get_inventory and
+	 * get_bank, so they say the same.
+	 */
+	@Override
+	public Transports.State transports(boolean withItems)
+	{
+		Map<Quest, QuestState> quests = new EnumMap<>(Quest.class);
+		for (Quest q : Transports.QUESTS)
+		{
+			quests.put(q, q.getState(client));
+		}
+		Map<Integer, Integer> varbits = new HashMap<>();
+		for (int id : Transports.VARBITS)
+		{
+			varbits.put(id, client.getVarbitValue(id));
+		}
+		Map<Integer, Integer> varps = new HashMap<>();
+		for (int id : Transports.VARPS)
+		{
+			varps.put(id, client.getVarpValue(id));
+		}
+		Transports.Held held = withItems ? new Transports.Held(equipment(), inventory().lines, bank()) : null;
+		return new Transports.State(quests, varbits, varps, client.getRealSkillLevel(Skill.MAGIC),
+			client.getBoostedSkillLevel(Skill.MAGIC), held);
 	}
 
 	/** Client thread. */

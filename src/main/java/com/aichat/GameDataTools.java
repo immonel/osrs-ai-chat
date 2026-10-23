@@ -1,9 +1,11 @@
 package com.aichat;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -16,9 +18,10 @@ import lombok.extern.slf4j.Slf4j;
 
 /**
  * The tools that read the player's own account, offered only with the settings that share it: equipment, inventory
- * and bank with "Share items and gear", Slayer task and achievement diaries with "Share character details". Made for one
- * reply: every call reads the game on the client thread, writes the answer up off it, and ends with one line for the
- * panel saying what was shared ("Shared your equipment"), told to {@code activity} just before the result goes back.
+ * and bank with "Share items and gear", Slayer task, achievement diaries and unlocked transport with "Share character
+ * details" (the teleport items in the last only with both). Made for one reply: every call reads the game on the client
+ * thread, writes the answer up off it, and ends with one line for the panel saying what was shared ("Shared your
+ * equipment"), told to {@code activity} just before the result goes back.
  */
 @Slf4j
 final class GameDataTools implements ChatApi.ToolRunner
@@ -28,10 +31,18 @@ final class GameDataTools implements ChatApi.ToolRunner
 	static final String GET_BANK = "get_bank";
 	static final String GET_SLAYER_TASK = "get_slayer_task";
 	static final String GET_ACHIEVEMENT_DIARIES = "get_achievement_diaries";
+	static final String GET_TRANSPORT_OPTIONS = "get_transport_options";
 
 	/** The client thread runs queued work every frame, also on the login screen; this is in case it can't. */
 	static final long READ_TIMEOUT_MILLIS = 5000;
 	private static final int MAX_SEARCH = 100;
+	/** As the panel and the model's errors name what get_transport_options shares: "Shared your unlocked transport". */
+	private static final String TRANSPORT = "unlocked transport";
+	/**
+	 * The panel's name for it when the player's items went in too, so the line still names everything of theirs that was
+	 * shared: "Shared your unlocked transport and teleport items".
+	 */
+	private static final String TRANSPORT_WITH_ITEMS = TRANSPORT + " and teleport items";
 	private static final String FAILED = "Reading the game failed inside AI Chat. Answer without it.";
 	private static final String ITEMS_SETTING = "Share items and gear";
 	/**
@@ -67,10 +78,16 @@ final class GameDataTools implements ChatApi.ToolRunner
 		GameData.SlayerTask slayerTask();
 
 		List<GameData.Diary> diaries();
+
+		/**
+		 * What the transport tables need ({@link Transports#QUESTS} and the rest), and with {@code withItems} what the
+		 * player wears, carries and keeps in the bank. Reading quest states runs game scripts.
+		 */
+		Transports.State transports(boolean withItems);
 	}
 
 	private final Game game;
-	/** Runs work on the client thread: ClientThread.invoke in the game. */
+	/** Runs work on the client thread: ClientThread.invokeLater in the game (see AiChatPlugin.startUp for why not invoke). */
 	private final Consumer<Runnable> clientThread;
 	private final ScheduledExecutorService executor;
 	private final BooleanSupplier shareItems;
@@ -103,7 +120,7 @@ final class GameDataTools implements ChatApi.ToolRunner
 	static boolean handles(String name)
 	{
 		return GET_EQUIPMENT.equals(name) || GET_INVENTORY.equals(name) || GET_BANK.equals(name)
-			|| GET_SLAYER_TASK.equals(name) || GET_ACHIEVEMENT_DIARIES.equals(name);
+			|| GET_SLAYER_TASK.equals(name) || GET_ACHIEVEMENT_DIARIES.equals(name) || GET_TRANSPORT_OPTIONS.equals(name);
 	}
 
 	/**
@@ -139,8 +156,35 @@ final class GameDataTools implements ChatApi.ToolRunner
 			specs.add(new ChatApi.ToolSpec(GET_ACHIEVEMENT_DIARIES,
 				"Which achievement diary tiers (easy, medium, hard, elite) the player has completed in each region.",
 				schema(new JsonObject())));
+			specs.add(new ChatApi.ToolSpec(GET_TRANSPORT_OPTIONS,
+				"Which ways to travel the player has unlocked, read from their game: fairy rings, spirit trees, gnome "
+					+ "gliders, the teleport spells on their spellbook (by their Magic level and quest unlocks), travel "
+					+ "unlocks from achievement diaries, and, while \"" + ITEMS_SETTING + "\" is on too, the teleport "
+					+ "jewellery they hold. Each is available, not available (and why), or unknown when the game doesn't "
+					+ "show it. Check it before suggesting a route, and suggest only what's available. It doesn't route or "
+					+ "list destinations; it names the Wiki pages that do.",
+				schema(transportCategory())));
 		}
 		return specs;
+	}
+
+	/** get_transport_options' one input: the kinds it can answer for alone, always in the same order. */
+	private static JsonObject transportCategory()
+	{
+		JsonObject category = property("string", "Optional: one kind only: \"" + Transports.FAIRY_RINGS + "\", \""
+			+ Transports.SPIRIT_TREES + "\", \"" + Transports.GLIDERS + "\", \"" + Transports.SPELLS + "\" (the teleports "
+			+ "on their spellbook), \"" + Transports.ITEMS + "\" (teleport jewellery they hold) or \"" + Transports.DIARIES
+			+ "\" (travel unlocks from achievement diaries). Leave it out for every kind; a long answer names what it "
+			+ "left out.");
+		JsonArray kinds = new JsonArray();
+		for (String kind : Transports.CATEGORIES)
+		{
+			kinds.add(kind);
+		}
+		category.add("enum", kinds);
+		JsonObject properties = new JsonObject();
+		properties.add("category", category);
+		return properties;
 	}
 
 	private static JsonObject property(String type, String description)
@@ -187,6 +231,10 @@ final class GameDataTools implements ChatApi.ToolRunner
 			{
 				readCharacter(report, "achievement diaries", game::diaries,
 					diaries -> shared("achievement diaries", GameData.diaryText(diaries)));
+			}
+			else if (GET_TRANSPORT_OPTIONS.equals(name))
+			{
+				transportOptions(report, input);
 			}
 			else
 			{
@@ -245,6 +293,55 @@ final class GameDataTools implements ChatApi.ToolRunner
 		}
 		String line = search == null ? SHARED + "bank" : SEARCHED + "\"" + ChatApi.shorten(search, 60) + "\"";
 		return new Outcome(line, ChatApi.ToolResult.ok(GameData.bankText(bank, search, now)));
+	}
+
+	/**
+	 * get_transport_options spans both settings. It goes with "Share character details", since nearly all of it comes
+	 * from quests, levels, diaries and the spellbook; the teleport jewellery and fairy-ring staves the player holds go in
+	 * only while "Share items and gear" is on too, and the answer says when they were left out, so neither setting
+	 * shares anything it doesn't promise. When they go in, the panel's line names them ("and teleport items"), as every
+	 * look at the player's items is named. Both are read now, at the call, as every other tool's setting is.
+	 */
+	private void transportOptions(Report report, JsonObject input)
+	{
+		if (!shareCharacter.getAsBoolean())
+		{
+			report.send(settingOff(TRANSPORT, CHARACTER_SETTING));
+			return;
+		}
+		String category = category(input);
+		if (category != null && !Transports.CATEGORIES.contains(category))
+		{
+			report.send(new Outcome("Skipped a look-up of your " + TRANSPORT + ": there's no kind called \""
+				+ ChatApi.shorten(category, 60) + "\"", ChatApi.ToolResult.error("There's no category \"" + category
+				+ "\". Leave category out for every kind, or use one of: " + String.join(", ", Transports.CATEGORIES) + ".")));
+			return;
+		}
+		boolean items = shareItems.getAsBoolean();
+		if (Transports.ITEMS.equals(category) && !items)
+		{
+			// Asked for nothing but what the other setting keeps back.
+			report.send(settingOff("teleport items", ITEMS_SETTING));
+			return;
+		}
+		boolean withItems = items && Transports.needsItems(category);
+		long now = System.currentTimeMillis();
+		// What they wear, carry and keep in the bank went in too: the panel's line says so, as it would for get_bank.
+		String sharedName = withItems ? TRANSPORT_WITH_ITEMS : TRANSPORT;
+		readThenWrite(report, TRANSPORT, () -> game.transports(withItems),
+			state -> shared(sharedName, Transports.text(state, category, now)));
+	}
+
+	/** The kind of transport asked for, however it's spelt ("Fairy rings" is fairy_rings); null for every kind. */
+	private static String category(JsonObject input)
+	{
+		JsonElement e = input == null ? null : input.get("category");
+		if (e == null || !e.isJsonPrimitive())
+		{
+			return null;
+		}
+		String s = e.getAsString().trim().toLowerCase(Locale.ROOT).replaceAll("[\\s\\p{Cc}-]+", "_");
+		return s.isEmpty() ? null : s;
 	}
 
 	/** Equipment, inventory and bank: only with "Share items and gear". */

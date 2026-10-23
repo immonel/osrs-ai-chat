@@ -49,6 +49,7 @@ their own order rather than lay it out themselves at a moment of their choosing.
   the saved chats are opened, brought back, saved and deleted, with a stand-in disk.
 - `LookupToolsTest`: the Wiki and GE price tools, against a stand-in Wiki and canned prices. `GameDataTest` and
   `GameDataToolsTest`: writing up the player's items, Slayer task and diaries, and when the game-data tools share.
+  `TransportsTest`: the transport the player has unlocked, and that what the game can't show is said as unknown.
   `CharacterInfoTest`: the character note.
 - `MarkdownTest` and `MessageViewTest`: reading replies' Markdown, and drawing it off screen (headless): alignment,
   the width a bubble hugs, links and tooltips, tables (drawn as tables or cards, copied as text). `TableViewTest`: how
@@ -82,6 +83,8 @@ their own order rather than lay it out themselves at a moment of their choosing.
   connection" and for the model picker. `ConnectionCheck`: what the list says, and what the picker offers.
 - `ToolBox`: the tools that go with a request. `LookupTools` and `WikiClient`: Wiki search and pages, GE prices.
   `GameDataTools` and `GameData`: the player's equipment, inventory, bank, Slayer task and diaries.
+  `Transports`: the transport they've unlocked (fairy rings, spirit trees, gliders, teleport spells and jewellery,
+  diary unlocks), from tables of game facts checked against the Wiki.
   `CharacterInfo`: the character note.
 - `AiChatPanel` (the sidebar: header, banner, transcript, composer, kept in step with the plugin through its `Host`),
   `MessageRow` (one message: the player's bubble, a reply with Copy and Retry, a note, an error), `Composer` (the input
