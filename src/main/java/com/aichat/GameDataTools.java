@@ -1,9 +1,11 @@
 package com.aichat;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -13,12 +15,15 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import lombok.extern.slf4j.Slf4j;
+import net.runelite.api.EquipmentInventorySlot;
 
 /**
- * The tools that read the player's own account, offered only with the settings that share it: equipment, inventory
- * and bank with "Share items and gear", Slayer task and achievement diaries with "Share character details". Made for one
- * reply: every call reads the game on the client thread, writes the answer up off it, and ends with one line for the
- * panel saying what was shared ("Shared your equipment"), told to {@code activity} just before the result goes back.
+ * The tools that read the player's own account, offered only with the settings that share it: equipment, inventory,
+ * bank and the combat bonuses of their items with "Share items and gear", Slayer task and achievement diaries with
+ * "Share character details". The bonuses say nothing about the player that the first three don't, so they need no
+ * setting of their own. Made for one reply: every call reads the game on the client thread, writes the answer up off
+ * it, and ends with one line for the panel saying what was shared ("Shared your equipment"), told to {@code activity}
+ * just before the result goes back.
  */
 @Slf4j
 final class GameDataTools implements ChatApi.ToolRunner
@@ -26,6 +31,8 @@ final class GameDataTools implements ChatApi.ToolRunner
 	static final String GET_EQUIPMENT = "get_equipment";
 	static final String GET_INVENTORY = "get_inventory";
 	static final String GET_BANK = "get_bank";
+	static final String GET_EQUIPMENT_BONUSES = "get_equipment_bonuses";
+	static final String GET_ITEM_STATS = "get_item_stats";
 	static final String GET_SLAYER_TASK = "get_slayer_task";
 	static final String GET_ACHIEVEMENT_DIARIES = "get_achievement_diaries";
 
@@ -64,6 +71,16 @@ final class GameDataTools implements ChatApi.ToolRunner
 		 */
 		GameData.Bank bank();
 
+		/** What the player is wearing, with the bonuses RuneLite's item data gives each piece. */
+		List<GameData.StatLine> equipmentBonuses();
+
+		/**
+		 * What the player has whose name contains {@code search} and that goes in {@code slot} (either may be null, not
+		 * both), with those bonuses. Unlike {@link #bank()} this answers even before the bank has been seen: it says so
+		 * instead, and the rest can still be searched.
+		 */
+		GameData.OwnedStats itemStats(String search, EquipmentInventorySlot slot);
+
 		GameData.SlayerTask slayerTask();
 
 		List<GameData.Diary> diaries();
@@ -75,27 +92,31 @@ final class GameDataTools implements ChatApi.ToolRunner
 	private final ScheduledExecutorService executor;
 	private final BooleanSupplier shareItems;
 	private final BooleanSupplier shareCharacter;
+	/** Whether this request has the Wiki tools: the item tools point the model there only when it can go. */
+	private final boolean wiki;
 	private final Consumer<String> activity;
 	private final long timeoutMillis;
 
 	/**
 	 * {@code shareItems} and {@code shareCharacter}: the settings, read again for every call, so turning one off while
-	 * a reply is being written stops the sharing at once.
+	 * a reply is being written stops the sharing at once. {@code wiki}: whether the request offers the Wiki tools.
 	 */
 	GameDataTools(Game game, Consumer<Runnable> clientThread, ScheduledExecutorService executor,
-		BooleanSupplier shareItems, BooleanSupplier shareCharacter, Consumer<String> activity)
+		BooleanSupplier shareItems, BooleanSupplier shareCharacter, boolean wiki, Consumer<String> activity)
 	{
-		this(game, clientThread, executor, shareItems, shareCharacter, activity, READ_TIMEOUT_MILLIS);
+		this(game, clientThread, executor, shareItems, shareCharacter, wiki, activity, READ_TIMEOUT_MILLIS);
 	}
 
 	GameDataTools(Game game, Consumer<Runnable> clientThread, ScheduledExecutorService executor,
-		BooleanSupplier shareItems, BooleanSupplier shareCharacter, Consumer<String> activity, long timeoutMillis)
+		BooleanSupplier shareItems, BooleanSupplier shareCharacter, boolean wiki, Consumer<String> activity,
+		long timeoutMillis)
 	{
 		this.game = game;
 		this.clientThread = clientThread;
 		this.executor = executor;
 		this.shareItems = shareItems;
 		this.shareCharacter = shareCharacter;
+		this.wiki = wiki;
 		this.activity = activity;
 		this.timeoutMillis = timeoutMillis;
 	}
@@ -103,12 +124,13 @@ final class GameDataTools implements ChatApi.ToolRunner
 	static boolean handles(String name)
 	{
 		return GET_EQUIPMENT.equals(name) || GET_INVENTORY.equals(name) || GET_BANK.equals(name)
+			|| GET_EQUIPMENT_BONUSES.equals(name) || GET_ITEM_STATS.equals(name)
 			|| GET_SLAYER_TASK.equals(name) || GET_ACHIEVEMENT_DIARIES.equals(name);
 	}
 
 	/**
-	 * The tools the settings allow right now, always in the same order and with the same text: they're part of the
-	 * prompt the provider caches.
+	 * The tools the settings allow right now, always in the same order and, for the same settings, with the same text:
+	 * they're part of the prompt the provider caches.
 	 */
 	List<ChatApi.ToolSpec> specs()
 	{
@@ -129,6 +151,35 @@ final class GameDataTools implements ChatApi.ToolRunner
 				"The player's bank as it was the last time they had it open: items and amounts with Grand Exchange "
 					+ "prices, placeholders left out. Unknown until they open their bank.",
 				schema(bank)));
+			specs.add(new ChatApi.ToolSpec(GET_EQUIPMENT_BONUSES,
+				"The combat bonuses of what the player is wearing right now, from RuneLite's own item data: attack and "
+					+ "defence for every style, strength, ranged strength, magic damage and prayer, added up over every "
+					+ "slot and then slot by slot. Use it rather than recalling an item's stats, and to say whether a "
+					+ "swap would be an upgrade. It has no level requirements in it.",
+				schema(new JsonObject())));
+			JsonObject itemStats = new JsonObject();
+			itemStats.add("search", property("string", "Part of an item's name, e.g. \"scimitar\" or \"dragon\". Case "
+				+ "doesn't matter. Optional when a slot is given."));
+			JsonObject slot = property("string", "Optional: only items that go in this equipment slot, e.g. \"weapon\" "
+				+ "for every weapon they have.");
+			JsonArray slots = new JsonArray();
+			for (String word : GameData.slotWords())
+			{
+				slots.add(word);
+			}
+			slot.add("enum", slots);
+			itemStats.add("slot", slot);
+			specs.add(new ChatApi.ToolSpec(GET_ITEM_STATS,
+				"The combat bonuses of the player's own items: anything they're wearing, carrying, or have in their bank "
+					+ "as last seen, with each weapon's best melee style and base attack speed. Give part of a name as the "
+					+ "search, a slot, or both. A slot lists what they have for it: what's worn there first, then the "
+					+ "rest by their largest attack bonus in any one style (ammunition by ranged strength), an order "
+					+ "rather than a ranking. Use it rather than recalling an item's stats, and to pick the best of what "
+					+ "they already have for a fight. At most " + GameData.STAT_LINES + " items a call, with no level "
+					+ "requirements in it"
+					+ (wiki ? "; for an item the player doesn't own, use the Wiki instead." : "; it has nothing on items "
+						+ "the player doesn't own."),
+				schema(itemStats)));
 		}
 		if (shareCharacter.getAsBoolean())
 		{
@@ -178,6 +229,35 @@ final class GameDataTools implements ChatApi.ToolRunner
 				String search = search(input);
 				long now = System.currentTimeMillis();
 				readItems(report, "bank", game::bank, bank -> bankOutcome(bank, search, now));
+			}
+			else if (GET_EQUIPMENT_BONUSES.equals(name))
+			{
+				readItems(report, "equipment bonuses", game::equipmentBonuses,
+					worn -> shared("equipment bonuses", GameData.bonusesText(worn, wiki)));
+			}
+			else if (GET_ITEM_STATS.equals(name))
+			{
+				String search = search(input);
+				String slotWord = slotWord(input);
+				EquipmentInventorySlot slot = slotWord == null ? null : GameData.gearSlot(slotWord);
+				long now = System.currentTimeMillis();
+				if (slotWord != null && slot == null)
+				{
+					report.send(new Outcome("Skipped an item look-up for an unknown slot \"" + ChatApi.shorten(slotWord, 60)
+						+ "\"", ChatApi.ToolResult.error("There's no \"" + slotWord + "\" slot: \"slot\" takes one of "
+						+ String.join(", ", GameData.slotWords()) + ".")));
+				}
+				else if (search == null && slot == null)
+				{
+					report.send(new Outcome("Skipped an item look-up with nothing to look up",
+						ChatApi.ToolResult.error("Say what to look up: \"search\" takes part of an item's name, \"slot\" "
+							+ "an equipment slot, and either will do.")));
+				}
+				else
+				{
+					readItems(report, "item stats", () -> game.itemStats(search, slot),
+						owned -> itemStatsOutcome(owned, search, slot, now, wiki));
+				}
 			}
 			else if (GET_SLAYER_TASK.equals(name))
 			{
@@ -247,7 +327,22 @@ final class GameDataTools implements ChatApi.ToolRunner
 		return new Outcome(line, ChatApi.ToolResult.ok(GameData.bankText(bank, search, now)));
 	}
 
-	/** Equipment, inventory and bank: only with "Share items and gear". */
+	/**
+	 * The panel names what was searched ("scimitar", the weapon slot, or "dragon" in the weapon slot), and whether the
+	 * bank was part of it, as it does for a bank search: the player can see which of their items the assistant looked
+	 * at.
+	 */
+	private static Outcome itemStatsOutcome(GameData.OwnedStats owned, String search, EquipmentInventorySlot slot,
+		long now, boolean wiki)
+	{
+		String slotPart = slot == null ? "" : "the " + GameData.slotName(slot).toLowerCase(Locale.ROOT) + " slot";
+		String what = search == null ? slotPart
+			: "\"" + ChatApi.shorten(search, 60) + "\"" + (slot == null ? "" : " in " + slotPart);
+		return new Outcome(SHARED + "item stats for " + what + (owned.bankSeen ? ", bank included" : " (bank not seen yet)"),
+			ChatApi.ToolResult.ok(GameData.itemStatsText(owned, search, slot, now, wiki)));
+	}
+
+	/** Equipment, inventory, bank and the bonuses of their items: only with "Share items and gear". */
 	private <T> void readItems(Report report, String what, Supplier<T> read, Function<T, Outcome> write)
 	{
 		if (!shareItems.getAsBoolean())
@@ -355,7 +450,19 @@ final class GameDataTools implements ChatApi.ToolRunner
 		}
 	}
 
-	/** The bank search the model gave, on one line and capped; null for the whole bank. */
+	/** The slot the model gave, trimmed; null for none. Whether it's a slot at all is {@link GameData#gearSlot}'s call. */
+	private static String slotWord(JsonObject input)
+	{
+		JsonElement e = input == null ? null : input.get("slot");
+		if (e == null || !e.isJsonPrimitive())
+		{
+			return null;
+		}
+		String s = e.getAsString().replaceAll("[\\s\\p{Cc}]+", " ").trim();
+		return s.isEmpty() ? null : s.length() <= MAX_SEARCH ? s : s.substring(0, MAX_SEARCH).trim();
+	}
+
+	/** The search the model gave, on one line and capped; null for none (the whole bank, or nothing to look up). */
 	private static String search(JsonObject input)
 	{
 		JsonElement e = input == null ? null : input.get("search");

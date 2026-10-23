@@ -11,8 +11,9 @@ import lombok.extern.slf4j.Slf4j;
 /**
  * The tools that go with one request, and the runner that answers the model's calls to them: the look-ups first
  * (wiki_search and wiki_page with "Wiki look-ups", ge_price always), then the game-data tools the sharing settings allow
- * (get_equipment, get_inventory, get_bank, get_slayer_task, get_achievement_diaries). Always in that order: the tools
- * are part of the prompt the provider caches, and changing them sends earlier replies as plain text.
+ * (get_equipment, get_inventory, get_bank, get_equipment_bonuses, get_item_stats, get_slayer_task,
+ * get_achievement_diaries). Always in that order: the tools are part of the prompt the provider caches, and changing
+ * them sends earlier replies as plain text.
  */
 @Slf4j
 final class ToolBox implements ChatApi.ToolRunner
@@ -56,6 +57,8 @@ final class ToolBox implements ChatApi.ToolRunner
 			GameDataTools gameData = new GameDataTools(game, clientThread, executor,
 				() -> setup.shareItems && shareItems.getAsBoolean(),
 				() -> setup.shareCharacter && shareCharacter.getAsBoolean(),
+				// The item tools send the model to the Wiki only when this request has the Wiki tools.
+				setup.wikiLookups && wiki != null,
 				activity);
 			return new ToolBox(lookups, gameData, started);
 		}

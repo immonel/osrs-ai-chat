@@ -14,6 +14,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
+import net.runelite.api.EquipmentInventorySlot;
 import net.runelite.http.api.item.ItemPrice;
 import okhttp3.OkHttpClient;
 import org.junit.After;
@@ -68,6 +69,9 @@ public class ToolBoxTest
 	/** A logged-in player wearing a whip. */
 	private static final class Game implements GameDataTools.Game
 	{
+		private static final GameData.StatLine WHIP = ItemFixtures.line("Weapon", GameData.Where.WORN, "Abyssal whip",
+			ItemFixtures.ABYSSAL_WHIP);
+
 		@Override
 		public boolean loggedIn()
 		{
@@ -90,6 +94,18 @@ public class ToolBoxTest
 		public GameData.Bank bank()
 		{
 			return null;
+		}
+
+		@Override
+		public List<GameData.StatLine> equipmentBonuses()
+		{
+			return Collections.singletonList(WHIP);
+		}
+
+		@Override
+		public GameData.OwnedStats itemStats(String search, EquipmentInventorySlot slot)
+		{
+			return new GameData.OwnedStats(Collections.singletonList(WHIP), false, 0);
 		}
 
 		@Override
@@ -128,7 +144,8 @@ public class ToolBoxTest
 	public void theToolsComeInOneOrder()
 	{
 		assertEquals(Arrays.asList("wiki_search", "wiki_page", "ge_price", "get_equipment", "get_inventory", "get_bank",
-			"get_slayer_task", "get_achievement_diaries"), names(tools(true, true, true).specs()));
+			"get_equipment_bonuses", "get_item_stats", "get_slayer_task", "get_achievement_diaries"),
+			names(tools(true, true, true).specs()));
 		assertEquals(Arrays.asList("wiki_search", "wiki_page", "ge_price"), names(tools(true, false, false).specs()));
 		assertEquals(Arrays.asList("ge_price", "get_slayer_task", "get_achievement_diaries"),
 			names(tools(false, false, true).specs()));
