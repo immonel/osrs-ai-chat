@@ -16,9 +16,10 @@ import lombok.extern.slf4j.Slf4j;
 
 /**
  * The tools that read the player's own account, offered only with the settings that share it: equipment, inventory
- * and bank with "Share items and gear", Slayer task and achievement diaries with "Share character details". Made for one
- * reply: every call reads the game on the client thread, writes the answer up off it, and ends with one line for the
- * panel saying what was shared ("Shared your equipment"), told to {@code activity} just before the result goes back.
+ * and bank with "Share items and gear", Slayer task, achievement diaries and current state with "Share character
+ * details". Made for one reply: every call reads the game on the client thread, writes the answer up off it, and ends
+ * with one line for the panel saying what was shared ("Shared your equipment"), told to {@code activity} just before
+ * the result goes back.
  */
 @Slf4j
 final class GameDataTools implements ChatApi.ToolRunner
@@ -28,6 +29,7 @@ final class GameDataTools implements ChatApi.ToolRunner
 	static final String GET_BANK = "get_bank";
 	static final String GET_SLAYER_TASK = "get_slayer_task";
 	static final String GET_ACHIEVEMENT_DIARIES = "get_achievement_diaries";
+	static final String GET_CURRENT_STATS = "get_current_stats";
 
 	/** The client thread runs queued work every frame, also on the login screen; this is in case it can't. */
 	static final long READ_TIMEOUT_MILLIS = 5000;
@@ -45,6 +47,8 @@ final class GameDataTools implements ChatApi.ToolRunner
 	/** Starts the line for what was read but never sent, in place of {@link #SHARED}. */
 	static final String READ = "Read your ";
 	private static final String CHARACTER_SETTING = "Share character details";
+	/** What get_current_stats shares, as the panel names it: singular, so "but didn't share it" reads right. */
+	private static final String CURRENT_STATE = "current state";
 
 	/**
 	 * Where the answers come from: {@link GameData} in the game, canned data in tests. Client thread only, and only
@@ -67,6 +71,16 @@ final class GameDataTools implements ChatApi.ToolRunner
 		GameData.SlayerTask slayerTask();
 
 		List<GameData.Diary> diaries();
+
+		/** How the player is doing right now, which is different a minute later. Only once {@link #statsArrived()}. */
+		GameData.Stats stats();
+
+		/**
+		 * Whether the levels the client has are this session's ({@link SessionStats#arrived()}). For a moment after
+		 * logging in, hopping worlds or switching accounts they're still the last session's, another account's after a
+		 * switch. It says nothing about run energy, which has no event; that's only assumed to come with the levels.
+		 */
+		boolean statsArrived();
 	}
 
 	private final Game game;
@@ -103,7 +117,7 @@ final class GameDataTools implements ChatApi.ToolRunner
 	static boolean handles(String name)
 	{
 		return GET_EQUIPMENT.equals(name) || GET_INVENTORY.equals(name) || GET_BANK.equals(name)
-			|| GET_SLAYER_TASK.equals(name) || GET_ACHIEVEMENT_DIARIES.equals(name);
+			|| GET_SLAYER_TASK.equals(name) || GET_ACHIEVEMENT_DIARIES.equals(name) || GET_CURRENT_STATS.equals(name);
 	}
 
 	/**
@@ -138,6 +152,14 @@ final class GameDataTools implements ChatApi.ToolRunner
 				schema(new JsonObject())));
 			specs.add(new ChatApi.ToolSpec(GET_ACHIEVEMENT_DIARIES,
 				"Which achievement diary tiers (easy, medium, hard, elite) the player has completed in each region.",
+				schema(new JsonObject())));
+			specs.add(new ChatApi.ToolSpec(GET_CURRENT_STATS,
+				"How the player is doing right now: hitpoints and prayer points left of how many, run energy, and any "
+					+ "skill a boost or a drain has moved off its real level. Use it for \"can I do this right now\" "
+					+ "questions; the levels sent with the player's messages are their real ones and show none of this. "
+					+ "A result is only true when it's read: one from an earlier turn is out of date, so call this again "
+					+ "for each question. It's one reading, not a view of a fight as it happens, so don't use it to call "
+					+ "one live (when to eat, drink or switch prayers). Special attack energy isn't included.",
 				schema(new JsonObject())));
 		}
 		return specs;
@@ -187,6 +209,13 @@ final class GameDataTools implements ChatApi.ToolRunner
 			{
 				readCharacter(report, "achievement diaries", game::diaries,
 					diaries -> shared("achievement diaries", GameData.diaryText(diaries)));
+			}
+			else if (GET_CURRENT_STATS.equals(name))
+			{
+				// No level is read until this session's are in (checked on the client thread, where both live): before
+				// that, they may be the last session's.
+				readCharacter(report, CURRENT_STATE, () -> game.statsArrived() ? game.stats() : null,
+					GameDataTools::statsOutcome);
 			}
 			else
 			{
@@ -247,6 +276,28 @@ final class GameDataTools implements ChatApi.ToolRunner
 		return new Outcome(line, ChatApi.ToolResult.ok(GameData.bankText(bank, search, now)));
 	}
 
+	/**
+	 * The live stats, or the model told to call once more when there are none to share: null when this session's levels
+	 * weren't in yet and nothing was read (after a login, hop or account switch the client may still have the last
+	 * session's, and after AI Chat is turned on it can't tell), or levels with no hitpoints at all, let through by the
+	 * game ticks before any came (see {@link GameData.Stats#loaded()}): the run energy beside them would be a 0 that
+	 * isn't true. The model can't wait a few seconds, so it's told what it can do: one more call, which comes after its
+	 * own round trip and so usually after the levels are in, or an answer without them.
+	 */
+	private static Outcome statsOutcome(GameData.Stats stats)
+	{
+		if (stats == null || !stats.loaded())
+		{
+			// Not "the game hadn't sent it": after AI Chat is turned on it had, but whose levels they are isn't
+			// known yet.
+			return new Outcome("Couldn't share your " + CURRENT_STATE + ": it wasn't ready yet",
+				ChatApi.ToolResult.error("The player's levels aren't ready yet, so their " + CURRENT_STATE
+					+ " can't be read. They've only just logged in, changed worlds or turned AI Chat on; this clears "
+					+ "within a couple of seconds. Call " + GET_CURRENT_STATS + " once more, or answer without it."));
+		}
+		return shared(CURRENT_STATE, GameData.statsText(stats));
+	}
+
 	/** Equipment, inventory and bank: only with "Share items and gear". */
 	private <T> void readItems(Report report, String what, Supplier<T> read, Function<T, Outcome> write)
 	{
@@ -258,7 +309,7 @@ final class GameDataTools implements ChatApi.ToolRunner
 		readThenWrite(report, what, read, write);
 	}
 
-	/** Slayer task and diaries: only with "Share character details". */
+	/** Slayer task, diaries and current state: only with "Share character details". */
 	private <T> void readCharacter(Report report, String what, Supplier<T> read, Function<T, Outcome> write)
 	{
 		if (!shareCharacter.getAsBoolean())
