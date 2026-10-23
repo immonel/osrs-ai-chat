@@ -30,14 +30,15 @@ final class CharacterInfo
 		{
 			levels.add(s.getName() + " " + client.getRealSkillLevel(s));
 		}
-		List<String> done = new ArrayList<>();
+		Quest[] all = Quest.values();
+		int done = 0;
 		List<String> started = new ArrayList<>();
-		for (Quest q : Quest.values())
+		for (Quest q : all)
 		{
 			QuestState state = q.getState(client);
 			if (state == QuestState.FINISHED)
 			{
-				done.add(q.getName());
+				done++;
 			}
 			else if (state == QuestState.IN_PROGRESS)
 			{
@@ -45,7 +46,7 @@ final class CharacterInfo
 			}
 		}
 		return format(me.getName(), accountType(client.getVarbitValue(VarbitID.IRONMAN)), me.getCombatLevel(),
-			client.getTotalLevel(), levels, client.getVarpValue(VarPlayerID.QP), done, started);
+			client.getTotalLevel(), levels, client.getVarpValue(VarPlayerID.QP), done, started, all.length);
 	}
 
 	/**
@@ -75,15 +76,23 @@ final class CharacterInfo
 		}
 	}
 
-	/** {@code accountType}: from {@link #accountType}, or null to leave it out. */
+	/**
+	 * {@code accountType}: from {@link #accountType}, or null to leave it out. The completed quests are counted, not
+	 * named: a maxed account's names ran to thousands of characters in every chat, and get_quests gives them when a
+	 * question is about them. The ones in progress are named: there are seldom many, and they're often what the
+	 * player is asking about.
+	 *
+	 * @param quests how many quests the game knows of, counting miniquests and each part of Recipe for Disaster, as
+	 *               get_quests counts them
+	 */
 	static String format(String name, String accountType, int combat, int total, List<String> levels, int questPoints,
-		List<String> done, List<String> started)
+		int done, List<String> started, int quests)
 	{
 		return "[Character: " + name + (accountType == null ? "" : ", " + accountType)
 			+ ", combat level " + combat + ", total level " + total + ". "
 			+ "Levels: " + String.join(", ", levels) + ". "
 			+ "Quest points: " + questPoints + ". "
-			+ "Quests completed (" + done.size() + "): " + (done.isEmpty() ? "none" : String.join(", ", done)) + ". "
-			+ "Quests in progress: " + (started.isEmpty() ? "none" : String.join(", ", started)) + ".]";
+			+ "Quests: " + GameData.questCounts(done, started.size(), quests)
+			+ (started.isEmpty() ? "" : " In progress: " + String.join(", ", started) + ".") + "]";
 	}
 }

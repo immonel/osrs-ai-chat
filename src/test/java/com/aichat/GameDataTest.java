@@ -8,6 +8,8 @@ import java.util.List;
 import java.util.Map;
 import net.runelite.api.EquipmentInventorySlot;
 import net.runelite.api.Item;
+import net.runelite.api.Quest;
+import net.runelite.api.QuestState;
 import net.runelite.api.gameval.ItemID;
 import net.runelite.api.gameval.VarbitID;
 import org.junit.Test;
@@ -263,6 +265,262 @@ public class GameDataTest
 		assertTrue(text, text.endsWith("\nCompleted 7 of 48 tiers."));
 	}
 
+	private static GameData.QuestLine quest(String name, QuestState state)
+	{
+		return new GameData.QuestLine(name, state);
+	}
+
+	/** Two completed, one started, one untouched. */
+	private static List<GameData.QuestLine> someQuests()
+	{
+		return Arrays.asList(quest("Cook's Assistant", QuestState.FINISHED),
+			quest("Dragon Slayer I", QuestState.FINISHED),
+			quest("Dragon Slayer II", QuestState.IN_PROGRESS),
+			quest("Desert Treasure II - The Fallen Empire", QuestState.NOT_STARTED));
+	}
+
+	/** Every quest the client knows, by its real names, none of them started. */
+	private static List<GameData.QuestLine> everyQuest()
+	{
+		List<GameData.QuestLine> quests = new ArrayList<>();
+		for (Quest q : Quest.values())
+		{
+			quests.add(quest(q.getName(), QuestState.NOT_STARTED));
+		}
+		return quests;
+	}
+
+	/** The names a filter picks out of the client's real quest list. */
+	private static List<String> found(String filter)
+	{
+		List<String> names = new ArrayList<>();
+		for (String line : GameData.questText(everyQuest(), filter).split("\n"))
+		{
+			if (line.startsWith("- "))
+			{
+				names.add(line.substring(2, line.lastIndexOf(": ")));
+			}
+		}
+		return names;
+	}
+
+	private static final String COUNTED = " These counts take in miniquests and each part of Recipe for Disaster, so "
+		+ "they won't match the game's own quest count.";
+
+	@Test
+	public void questsAreCountedBeforeTheyAreListed()
+	{
+		// The counts come first however the filter went, so the answer says where the player stands either way, and
+		// they say what they count: the client's list isn't the game's quest count.
+		String all = GameData.questText(someQuests(), null);
+		assertTrue(all, all.startsWith("The player's quests: 2 of 4 completed, 1 in progress, 1 not started." + COUNTED
+			+ "\nEvery quest:\n- Cook's Assistant: completed\n- Dragon Slayer I: completed\n- Dragon Slayer II: in progress"
+			+ "\n- Desert Treasure II - The Fallen Empire: not started"));
+		assertEquals(4, listed(all));
+		assertEquals("The player's quests: 0 of 0 completed, 0 in progress, 0 not started." + COUNTED + "\nNo quests "
+			+ "could be read, which shouldn't happen; answer without them.", GameData.questText(Collections.emptyList(), null));
+	}
+
+	@Test
+	public void everyQuestTheClientKnowsFits()
+	{
+		// The client lists its newest quests last: a cut anywhere short of them all would drop those first. The bound is
+		// far above the client's list; were the list ever to pass it, the answer says so, and a new quest in a RuneLite
+		// release mustn't fail the build either way.
+		int known = Quest.values().length;
+		int shown = Math.min(known, GameData.QUEST_LINES);
+		String all = GameData.questText(everyQuest(), null);
+		assertEquals(shown, listed(all));
+		assertEquals(all, known > GameData.QUEST_LINES, all.contains("not listed"));
+		assertTrue(all, all.contains("\n- While Guthix Sleeps: not started\n"));
+		assertTrue(all, all.contains("\n- Desert Treasure II - The Fallen Empire: not started\n"));
+		assertEquals(shown, listed(GameData.questText(everyQuest(), "incomplete")));
+		assertEquals(shown, listed(GameData.questText(everyQuest(), "not started")));
+	}
+
+	/**
+	 * {@code filter} finds each of {@code names} in the client's real quest list, and none of {@code not}. The list
+	 * grows with every RuneLite release, so this never says nothing else is found.
+	 */
+	private static void finds(String filter, List<String> names, String... not)
+	{
+		List<String> found = found(filter);
+		assertTrue(filter + " found " + found, found.containsAll(names));
+		for (String n : not)
+		{
+			assertFalse(filter + " found " + n, found.contains(n));
+		}
+	}
+
+	@Test
+	public void questNamesAreMatchedLoosely()
+	{
+		String found = GameData.questText(someQuests(), "DRAGON slayer");
+		assertTrue(found, found.contains("\nThe 2 quests matching \"DRAGON slayer\":"
+			+ "\n- Dragon Slayer I: completed\n- Dragon Slayer II: in progress"));
+		// Part of a word in the middle of a name counts too.
+		finds("fallen", List.of("Desert Treasure II - The Fallen Empire", "Fallen From Grace"));
+
+		// Written other ways than the game writes them: "&", numerals, punctuation, apostrophes, spaces.
+		finds("Romeo and Juliet", List.of("Romeo & Juliet"));
+		finds("Dragon Slayer 2", List.of("Dragon Slayer II"), "Dragon Slayer I");
+		finds("dragon slayer 1", List.of("Dragon Slayer I"), "Dragon Slayer II");
+		finds("desert treasure", List.of("Desert Treasure I", "Desert Treasure II - The Fallen Empire"));
+		finds("Another Slice of HAM", List.of("Another Slice of H.A.M."));
+		finds("Cook’s Assistant", List.of("Cook's Assistant"));
+		finds("cooks assistant", List.of("Cook's Assistant"));
+		finds("shades of mortton", List.of("Shades of Mort'ton"));
+		finds("Fairy Tale 1", List.of("Fairytale I - Growing Pains"), "Fairytale II - Cure a Queen");
+		finds("Mourning's End: Part 2", List.of("Mourning's End Part II"), "Mourning's End Part I");
+		finds("wartface and bentnoze", List.of("Recipe for Disaster - Wartface & Bentnoze"),
+			"Recipe for Disaster - Mountain Dwarf");
+		// The "X" of "X Marks the Spot" isn't a numeral.
+		finds("x marks", List.of("X Marks the Spot"));
+		// A Wiki page title: the part before the "/" is the quest, and for Recipe for Disaster that's every part.
+		finds("Dragon Slayer II/Quick guide", List.of("Dragon Slayer II"), "Dragon Slayer I");
+		finds("Recipe for Disaster/Another Cook's Quest", List.of("Recipe for Disaster",
+			"Recipe for Disaster - Another Cook's Quest", "Recipe for Disaster - Mountain Dwarf",
+			"Recipe for Disaster - Culinaromancer"));
+
+		String missing = GameData.questText(someQuests(), "shield of arrav");
+		assertTrue(missing, missing.endsWith("No quest name matches \"shield of arrav\". Try a shorter or different "
+			+ "filter, or \"incomplete\" for every quest they haven't finished."));
+		assertEquals(0, listed(missing));
+		// Nothing left to match on is every quest, not a list headed by a name it never matched.
+		assertTrue(GameData.questText(someQuests(), "?!").contains("\nEvery quest:\n"));
+	}
+
+	@Test
+	public void questFiltersForAStateSayWhatTheyFound()
+	{
+		assertTrue(GameData.questText(someQuests(), "in progress")
+			.endsWith("The 1 quest they've started and not finished:\n- Dragon Slayer II: in progress"));
+		assertTrue(GameData.questText(someQuests(), "incomplete")
+			.endsWith("The 2 quests they haven't finished:\n- Dragon Slayer II: in progress"
+				+ "\n- Desert Treasure II - The Fallen Empire: not started"));
+		assertTrue(GameData.questText(someQuests(), "not started")
+			.endsWith("The 1 quest they haven't started:\n- Desert Treasure II - The Fallen Empire: not started"));
+		assertTrue(GameData.questText(someQuests(), "Completed")
+			.endsWith("The 2 quests they've completed:\n- Cook's Assistant: completed\n- Dragon Slayer I: completed"));
+		// Each state word the list is written in can be asked for, however it's written.
+		assertEquals(GameData.questText(someQuests(), "in progress"), GameData.questText(someQuests(), "In-Progress"));
+		assertEquals(GameData.questText(someQuests(), "not started"), GameData.questText(someQuests(), "Not started."));
+
+		// An account at either end: nothing to report, said as such rather than as an empty list.
+		List<GameData.QuestLine> fresh = Collections.singletonList(quest("Cook's Assistant", QuestState.NOT_STARTED));
+		assertTrue(GameData.questText(fresh, "in progress").endsWith("They have no quest in progress."));
+		assertTrue(GameData.questText(fresh, "completed").endsWith("They haven't completed a quest yet."));
+		List<GameData.QuestLine> finished = Collections.singletonList(quest("Cook's Assistant", QuestState.FINISHED));
+		assertTrue(GameData.questText(finished, "incomplete").endsWith("They've completed every quest."));
+		assertTrue(GameData.questText(finished, "not started").endsWith("They've started every quest."));
+	}
+
+	@Test
+	public void otherWordsForCompletedPickTheCompletedQuests()
+	{
+		String completed = GameData.questText(someQuests(), "completed");
+		for (String word : Arrays.asList("complete", "Finished", "done", "Done."))
+		{
+			assertEquals(word, completed, GameData.questText(someQuests(), word));
+		}
+		// "Started" could mean in progress, or in progress or completed: a name like any other, which tells the model
+		// what it can ask for instead.
+		assertTrue(GameData.questText(someQuests(), "started").endsWith("No quest name matches \"started\". Try a "
+			+ "shorter or different filter, or \"incomplete\" for every quest they haven't finished."));
+	}
+
+	@Test
+	public void aWikiSubpageTitleFindsTheQuestItBelongsTo()
+	{
+		// The part before the "/" is the name.
+		assertEquals(GameData.questText(everyQuest(), "Recipe for Disaster"),
+			GameData.questText(everyQuest(), "Recipe for Disaster/Mountain Dwarf").replace("\"Recipe for Disaster/Mountain "
+				+ "Dwarf\"", "\"Recipe for Disaster\""));
+	}
+
+	@Test
+	public void miniquestsAreMarked()
+	{
+		List<GameData.QuestLine> quests = Arrays.asList(quest("Cook's Assistant", QuestState.FINISHED),
+			new GameData.QuestLine("Mage Arena I", QuestState.NOT_STARTED, true));
+		String all = GameData.questText(quests, null);
+		assertTrue(all, all.endsWith("\nEvery quest:\n- Cook's Assistant: completed\n- Mage Arena I (miniquest): not started"));
+		// The mark isn't part of the name: a filter finds it by its name alone.
+		assertTrue(GameData.questText(quests, "mage arena").endsWith("\n- Mage Arena I (miniquest): not started"));
+		assertTrue(GameData.questText(quests, "miniquest").contains("No quest name matches"));
+	}
+
+	@Test
+	public void miniquestsAreReadFromTheGamesQuestTable()
+	{
+		// The table's type column, by each quest's id: 1 for a miniquest. A row that can't be read (gone after a game
+		// update) leaves the quest listed, only unmarked, and so does a row that isn't in the quest table, whatever its
+		// type column holds: the game itself reads a quest's columns only from a row in the quest table.
+		Map<Integer, Object[]> types = new HashMap<>();
+		types.put(Quest.MAGE_ARENA_I.getId(), new Object[]{GameData.MINIQUEST_TYPE});
+		types.put(Quest.DRAGON_SLAYER_I.getId(), new Object[]{0});
+		types.put(Quest.SHIELD_OF_ARRAV.getId(), new Object[0]);
+		types.put(Quest.LOST_CITY.getId(), new Object[]{"1"});
+		types.put(Quest.BIOHAZARD.getId(), new Object[]{GameData.MINIQUEST_TYPE});
+		List<Integer> questRows = new ArrayList<>();
+		for (Quest q : Quest.values())
+		{
+			if (q != Quest.BIOHAZARD)
+			{
+				questRows.add(q.getId());
+			}
+		}
+		List<GameData.QuestLine> quests = GameData.quests(q -> q == Quest.COOKS_ASSISTANT ? QuestState.FINISHED
+			: QuestState.NOT_STARTED, () -> questRows, row ->
+		{
+			if (row == Quest.MONKEY_MADNESS_I.getId())
+			{
+				throw new IllegalArgumentException("no such row");
+			}
+			return types.get(row);
+		});
+
+		assertEquals(Quest.values().length, quests.size());
+		Map<String, GameData.QuestLine> byName = new HashMap<>();
+		for (GameData.QuestLine q : quests)
+		{
+			byName.put(q.name, q);
+		}
+		assertTrue(byName.get("Mage Arena I").miniquest);
+		for (Quest q : Arrays.asList(Quest.DRAGON_SLAYER_I, Quest.SHIELD_OF_ARRAV, Quest.LOST_CITY, Quest.MONKEY_MADNESS_I,
+			Quest.COOKS_ASSISTANT, Quest.BIOHAZARD))
+		{
+			assertFalse(q.getName(), byName.get(q.getName()).miniquest);
+		}
+		assertEquals(QuestState.FINISHED, byName.get("Cook's Assistant").state);
+		assertEquals(QuestState.NOT_STARTED, byName.get("Monkey Madness I").state);
+
+		// Without the table's rows, every quest is still listed, only none is marked.
+		List<GameData.QuestLine> unread = GameData.quests(q -> QuestState.NOT_STARTED, () ->
+		{
+			throw new IllegalStateException("no table");
+		}, types::get);
+		assertEquals(Quest.values().length, unread.size());
+		for (GameData.QuestLine q : unread)
+		{
+			assertFalse(q.name, q.miniquest);
+		}
+	}
+
+	@Test
+	public void aQuestListPastTheBoundIsCutWithANote()
+	{
+		List<GameData.QuestLine> quests = new ArrayList<>();
+		for (int i = 1; i <= GameData.QUEST_LINES + 40; i++)
+		{
+			quests.add(quest("Quest " + i, QuestState.NOT_STARTED));
+		}
+		String text = GameData.questText(quests, null);
+		assertEquals(GameData.QUEST_LINES, listed(text));
+		assertTrue(text, text.endsWith("\n- Quest " + GameData.QUEST_LINES + ": not started\n...and 40 more quests not "
+			+ "listed. Ask again with a filter for the quests the question is about."));
+	}
+
 	@Test
 	public void slotNamesReadAsWords()
 	{
@@ -284,12 +542,12 @@ public class GameDataTest
 		assertNull(CharacterInfo.accountType(7));
 
 		String s = CharacterInfo.format("Zezima", CharacterInfo.accountType(3), 126, 2277, Arrays.asList("Attack 99", "Sailing 1"),
-			300, Collections.singletonList("Dragon Slayer I"), Collections.emptyList());
+			300, 1, Collections.emptyList(), 206);
 		assertTrue(s, s.startsWith("[Character: Zezima, a hardcore ironman, combat level 126, total level 2277. "
 			+ "Levels: Attack 99, Sailing 1. Quest points: 300."));
 		// An account type the plugin doesn't know yet is left out rather than guessed.
 		String unknown = CharacterInfo.format("Zezima", CharacterInfo.accountType(9), 126, 2277, Collections.emptyList(),
-			0, Collections.emptyList(), Collections.emptyList());
+			0, 0, Collections.emptyList(), 206);
 		assertTrue(unknown, unknown.startsWith("[Character: Zezima, combat level 126,"));
 	}
 }
