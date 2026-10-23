@@ -1145,7 +1145,8 @@ final class GameData implements GameDataTools.Game
 					.append(". Give part of a name as well to see others.");
 			}
 		}
-		return out.append(unplacedNote(owned.unplaced)).append('\n').append(READING_NOTE).toString();
+		return out.append(unplacedNote(owned.unplaced)).append('\n').append(setEffects(wiki)).append('\n')
+			.append(READING_NOTE).toString();
 	}
 
 	/**
@@ -1292,6 +1293,18 @@ final class GameData implements GameDataTools.Game
 		return "These are bonuses only: RuneLite's item data carries no level requirements, so none are given here"
 			+ (wiki ? "; look any up on the Wiki." : ", and none should be guessed.")
 			+ " Where an item's bonuses are given, one not listed is 0.";
+	}
+
+	/**
+	 * Said with every item search that finds something. Each line is one item's own figures, so a set worn together
+	 * (Barrows armour, say) shows no sign of the effect it has as a set, and a model took that for having none. No list
+	 * of sets: it would go stale, and the Wiki has each one.
+	 */
+	private static String setEffects(boolean wiki)
+	{
+		return "These are each item's own figures: some sets have an effect when every piece is worn together, which "
+			+ "isn't in them, so don't conclude a set has none" + (wiki ? " without checking its Wiki page." : "; that "
+			+ "can't be checked here.");
 	}
 
 	/**

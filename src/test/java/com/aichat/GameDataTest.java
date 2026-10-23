@@ -452,6 +452,27 @@ public class GameDataTest
 		assertTrue(both, both.contains("\n- Dragonfire shield (in their bank) - shield slot;"));
 	}
 
+	/**
+	 * Asked about Verac's set, a model read four items' own figures, found no sign of the set's effect in them, and
+	 * told the player the set had none. Every search that finds something now says a set's effect isn't in the figures.
+	 */
+	@Test
+	public void itemStatsSayASetsEffectIsntInThem()
+	{
+		List<GameData.StatLine> bank = Arrays.asList(
+			in(GameData.Where.BANK, "Dragonfire shield", ItemFixtures.DRAGONFIRE_SHIELD));
+		String text = GameData.itemStatsText(new GameData.OwnedStats(bank, true, 0), "dragonfire", null, MINUTE, true);
+		assertTrue(text, text.contains("\nThese are each item's own figures: some sets have an effect when every piece is "
+			+ "worn together, which isn't in them, so don't conclude a set has none without checking its Wiki page.\n"));
+		// Without the Wiki tools there's nowhere to check, so the model isn't sent there.
+		String noWiki = GameData.itemStatsText(new GameData.OwnedStats(bank, true, 0), "dragonfire", null, MINUTE, false);
+		assertTrue(noWiki, noWiki.contains("so don't conclude a set has none; that can't be checked here.\n"));
+		assertFalse(noWiki, noWiki.contains("Wiki page"));
+		// Nothing found, nothing to read wrongly.
+		String none = GameData.itemStatsText(new GameData.OwnedStats(bank, true, 0), "twisted bow", null, MINUTE, true);
+		assertFalse(none, none.contains("each item's own figures"));
+	}
+
 	@Test
 	public void itemStatsAreCutWithANote()
 	{
@@ -690,7 +711,8 @@ public class GameDataTest
 			"Toxic blowpipe"), order);
 		assertTrue(text, text.contains("\nNot listed, because RuneLite's data has no bonuses for them and so doesn't say "
 			+ "which slot they go in: Red partyhat, Armadyl godsword, Test relic. Search for one by name to see what's "
-			+ "known about it.\nThe best melee style weighs"));
+			+ "known about it.\nThese are each item's own figures:"));
+		assertTrue(text, text.contains("without checking its Wiki page.\nThe best melee style weighs"));
 		assertFalse(text, text.contains("Rune platebody"));
 		assertFalse(text, text.contains("Shark"));
 
