@@ -72,8 +72,10 @@ final class RequestRunner
 		final boolean shareCharacter;
 		final boolean shareItems;
 		final boolean wikiLookups;
+		final boolean shareLocation;
 
-		Setup(ChatApi api, String model, String system, boolean shareCharacter, boolean shareItems, boolean wikiLookups)
+		Setup(ChatApi api, String model, String system, boolean shareCharacter, boolean shareItems, boolean wikiLookups,
+			boolean shareLocation)
 		{
 			this.api = api;
 			this.model = model;
@@ -81,6 +83,7 @@ final class RequestRunner
 			this.shareCharacter = shareCharacter;
 			this.shareItems = shareItems;
 			this.wikiLookups = wikiLookups;
+			this.shareLocation = shareLocation;
 		}
 	}
 

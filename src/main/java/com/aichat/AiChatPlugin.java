@@ -77,10 +77,11 @@ public class AiChatPlugin extends Plugin
 		+ "requirements and prices change, so check them with your tools when you have them (wiki_search and wiki_page "
 		+ "read the OSRS Wiki, ge_price gives Grand Exchange prices from RuneLite) rather than relying on memory. When "
 		+ "you used a Wiki page, link it, as https://oldschool.runescape.wiki/w/Page_name. Without the tools, say when "
-		+ "you're unsure and suggest the OSRS Wiki. Tools that read the player's equipment, inventory, bank, Slayer task "
-		+ "or achievement diaries are only offered when the player has chosen to share those; if you have other tools "
-		+ "but not the one you'd need, say which setting would allow it (\"Share items and gear\" or \"Share "
-		+ "character details\"). You can't see or control the game otherwise. If the player has chosen to share their character, "
+		+ "you're unsure and suggest the OSRS Wiki. Tools that read the player's equipment, inventory, bank, Slayer task, "
+		+ "achievement diaries or where they're standing are only offered when the player has chosen to share those; if "
+		+ "you have other tools but not the one you'd need, say which setting would allow it (\"Share items and gear\", "
+		+ "\"Share character details\" or \"Share where you are\"). You can't see or control the game otherwise. If the "
+		+ "player has chosen to share their character, "
 		+ "their message starts with a [Character: ...] note with details from the game.";
 
 	@Inject
@@ -212,7 +213,7 @@ public class AiChatPlugin extends Plugin
 		Requests requests = new Requests();
 		tools = new ToolBox.Parts(new WikiClient(okHttpClient, gson, () -> config.aiRequests() && config.wikiLookups()),
 			new LookupTools.RuneLitePrices(itemManager, clientThread, executor, runeLiteConfig::useWikiItemPrices),
-			gameData, clientThread::invoke, executor, this::canShareItems, requests::shareCharacter);
+			gameData, clientThread::invoke, executor, this::canShareItems, requests::shareCharacter, this::canShareLocation);
 		runner = new RequestRunner(requests, SwingUtilities::invokeLater, executor);
 		tester = new ConnectionTester(SwingUtilities::invokeLater, () ->
 		{
@@ -328,6 +329,15 @@ public class AiChatPlugin extends Plugin
 		return config.aiRequests() && config.shareItems();
 	}
 
+	/**
+	 * Unlike the bank, where the player is isn't read ahead of the assistant asking, so there's nothing held for it to
+	 * forget when the setting goes off. What a look found goes with its reply, like any other look-up.
+	 */
+	private boolean canShareLocation()
+	{
+		return config.aiRequests() && config.shareLocation();
+	}
+
 	/** The bank as last seen isn't kept where it can't be shared. Also checked when AI Chat is turned on. */
 	private void forgetBankUnlessShared()
 	{
@@ -364,7 +374,7 @@ public class AiChatPlugin extends Plugin
 	{
 		ChatApi api = api();
 		return api == null ? null : new RequestRunner.Setup(api, provider.model(), systemPrompt(), config.sendCharacter(),
-			config.shareItems(), config.wikiLookups());
+			config.shareItems(), config.wikiLookups(), config.shareLocation());
 	}
 
 	private String systemPrompt()

@@ -16,9 +16,10 @@ import lombok.extern.slf4j.Slf4j;
 
 /**
  * The tools that read the player's own account, offered only with the settings that share it: equipment, inventory
- * and bank with "Share items and gear", Slayer task and achievement diaries with "Share character details". Made for one
- * reply: every call reads the game on the client thread, writes the answer up off it, and ends with one line for the
- * panel saying what was shared ("Shared your equipment"), told to {@code activity} just before the result goes back.
+ * and bank with "Share items and gear", Slayer task and achievement diaries with "Share character details", where they
+ * are standing with "Share where you are". Made for one reply: every call reads the game on the client thread, writes
+ * the answer up off it, and ends with one line for the panel saying what was shared ("Shared your equipment"), told to
+ * {@code activity} just before the result goes back.
  */
 @Slf4j
 final class GameDataTools implements ChatApi.ToolRunner
@@ -28,6 +29,7 @@ final class GameDataTools implements ChatApi.ToolRunner
 	static final String GET_BANK = "get_bank";
 	static final String GET_SLAYER_TASK = "get_slayer_task";
 	static final String GET_ACHIEVEMENT_DIARIES = "get_achievement_diaries";
+	static final String GET_LOCATION = "get_location";
 
 	/** The client thread runs queued work every frame, also on the login screen; this is in case it can't. */
 	static final long READ_TIMEOUT_MILLIS = 5000;
@@ -45,6 +47,7 @@ final class GameDataTools implements ChatApi.ToolRunner
 	/** Starts the line for what was read but never sent, in place of {@link #SHARED}. */
 	static final String READ = "Read your ";
 	private static final String CHARACTER_SETTING = "Share character details";
+	private static final String LOCATION_SETTING = "Share where you are";
 
 	/**
 	 * Where the answers come from: {@link GameData} in the game, canned data in tests. Client thread only, and only
@@ -67,6 +70,9 @@ final class GameDataTools implements ChatApi.ToolRunner
 		GameData.SlayerTask slayerTask();
 
 		List<GameData.Diary> diaries();
+
+		/** Null when the player's own position isn't there to read, as while the game loads. */
+		GameData.Location location();
 	}
 
 	private final Game game;
@@ -75,27 +81,30 @@ final class GameDataTools implements ChatApi.ToolRunner
 	private final ScheduledExecutorService executor;
 	private final BooleanSupplier shareItems;
 	private final BooleanSupplier shareCharacter;
+	private final BooleanSupplier shareLocation;
 	private final Consumer<String> activity;
 	private final long timeoutMillis;
 
 	/**
-	 * {@code shareItems} and {@code shareCharacter}: the settings, read again for every call, so turning one off while
-	 * a reply is being written stops the sharing at once.
+	 * {@code shareItems}, {@code shareCharacter} and {@code shareLocation}: the settings, read again for every call, so
+	 * turning one off while a reply is being written stops the sharing at once.
 	 */
 	GameDataTools(Game game, Consumer<Runnable> clientThread, ScheduledExecutorService executor,
-		BooleanSupplier shareItems, BooleanSupplier shareCharacter, Consumer<String> activity)
+		BooleanSupplier shareItems, BooleanSupplier shareCharacter, BooleanSupplier shareLocation, Consumer<String> activity)
 	{
-		this(game, clientThread, executor, shareItems, shareCharacter, activity, READ_TIMEOUT_MILLIS);
+		this(game, clientThread, executor, shareItems, shareCharacter, shareLocation, activity, READ_TIMEOUT_MILLIS);
 	}
 
 	GameDataTools(Game game, Consumer<Runnable> clientThread, ScheduledExecutorService executor,
-		BooleanSupplier shareItems, BooleanSupplier shareCharacter, Consumer<String> activity, long timeoutMillis)
+		BooleanSupplier shareItems, BooleanSupplier shareCharacter, BooleanSupplier shareLocation,
+		Consumer<String> activity, long timeoutMillis)
 	{
 		this.game = game;
 		this.clientThread = clientThread;
 		this.executor = executor;
 		this.shareItems = shareItems;
 		this.shareCharacter = shareCharacter;
+		this.shareLocation = shareLocation;
 		this.activity = activity;
 		this.timeoutMillis = timeoutMillis;
 	}
@@ -103,7 +112,7 @@ final class GameDataTools implements ChatApi.ToolRunner
 	static boolean handles(String name)
 	{
 		return GET_EQUIPMENT.equals(name) || GET_INVENTORY.equals(name) || GET_BANK.equals(name)
-			|| GET_SLAYER_TASK.equals(name) || GET_ACHIEVEMENT_DIARIES.equals(name);
+			|| GET_SLAYER_TASK.equals(name) || GET_ACHIEVEMENT_DIARIES.equals(name) || GET_LOCATION.equals(name);
 	}
 
 	/**
@@ -138,6 +147,17 @@ final class GameDataTools implements ChatApi.ToolRunner
 				schema(new JsonObject())));
 			specs.add(new ChatApi.ToolSpec(GET_ACHIEVEMENT_DIARIES,
 				"Which achievement diary tiers (easy, medium, hard, elite) the player has completed in each region.",
+				schema(new JsonObject())));
+		}
+		if (shareLocation.getAsBoolean())
+		{
+			specs.add(new ChatApi.ToolSpec(GET_LOCATION,
+				"Where the player is standing right now: the name of the area (and a landmark if one is close), "
+					+ "whether they're upstairs, underground or aboard a boat, and what the game says about other "
+					+ "players attacking them there: the Wilderness and its level, other PvP areas, PvP worlds. Areas "
+					+ "are RuneLite's names for the map's regions, so some spots have none. Use it for anything about "
+					+ "where to go from here, what's nearby, how to get somewhere, or whether other players can attack "
+					+ "them there.",
 				schema(new JsonObject())));
 		}
 		return specs;
@@ -188,6 +208,10 @@ final class GameDataTools implements ChatApi.ToolRunner
 				readCharacter(report, "achievement diaries", game::diaries,
 					diaries -> shared("achievement diaries", GameData.diaryText(diaries)));
 			}
+			else if (GET_LOCATION.equals(name))
+			{
+				readLocation(report, "location", game::location, GameDataTools::locationOutcome);
+			}
 			else
 			{
 				report.send(new Outcome("Skipped an unknown look-up \"" + ChatApi.shorten(name, 60) + "\"",
@@ -234,6 +258,21 @@ final class GameDataTools implements ChatApi.ToolRunner
 		return line.startsWith(SEARCHED) ? line + UNSHARED : line;
 	}
 
+	/**
+	 * A logged-in player with no position of their own: the game was between places, as on a loading screen. That's
+	 * ordinary, not a fault in AI Chat, so it isn't put the way a failed read is.
+	 */
+	private static Outcome locationOutcome(GameData.Location at)
+	{
+		if (at == null)
+		{
+			return new Outcome("Couldn't read your location: the game was loading",
+				ChatApi.ToolResult.error("The game hadn't placed the player anywhere yet, as happens on a loading "
+					+ "screen, so where they are couldn't be read. Try once more in a moment, or answer without it."));
+		}
+		return shared("location", GameData.locationText(at));
+	}
+
 	private static Outcome bankOutcome(GameData.Bank bank, String search, long now)
 	{
 		if (bank == null)
@@ -264,6 +303,17 @@ final class GameDataTools implements ChatApi.ToolRunner
 		if (!shareCharacter.getAsBoolean())
 		{
 			report.send(settingOff(what, CHARACTER_SETTING));
+			return;
+		}
+		readThenWrite(report, what, read, write);
+	}
+
+	/** Where the player is: only with "Share where you are". */
+	private <T> void readLocation(Report report, String what, Supplier<T> read, Function<T, Outcome> write)
+	{
+		if (!shareLocation.getAsBoolean())
+		{
+			report.send(settingOff(what, LOCATION_SETTING));
 			return;
 		}
 		readThenWrite(report, what, read, write);
