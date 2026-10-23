@@ -47,6 +47,9 @@ public class GameDataToolsTest
 	private static final class FakeGame implements GameDataTools.Game
 	{
 		boolean loggedIn = true;
+		/** With {@link #loggedIn} false: what the game was busy with, or null for the login screen. */
+		GameDataTools.Busy busy;
+		volatile String busyOn;
 		GameData.Bank bank;
 		RuntimeException failure;
 		final AtomicInteger reads = new AtomicInteger();
@@ -66,6 +69,17 @@ public class GameDataToolsTest
 		public boolean loggedIn()
 		{
 			return loggedIn;
+		}
+
+		@Override
+		public GameDataTools.Busy busy()
+		{
+			busyOn = Thread.currentThread().getName();
+			if (failure != null)
+			{
+				throw failure;
+			}
+			return busy;
 		}
 
 		@Override
@@ -240,6 +254,72 @@ public class GameDataToolsTest
 		assertEquals("The player isn't logged in, so their inventory can't be read. Ask them to log in first.", e.result.content);
 		assertEquals(0, game.reads.get());
 		assertEquals(Collections.singletonList("Couldn't share your inventory: you're not logged in"), activity);
+	}
+
+	@Test
+	public void loadingChangingWorldsOrReconnectingIsntLoggedOut() throws Exception
+	{
+		// The player is still in the game, so the model mustn't ask them to log in.
+		game.loggedIn = false;
+		game.busy = GameDataTools.Busy.LOADING;
+		Ended loading = run(tools(), "get_inventory", new JsonObject());
+		assertTrue(loading.result.error);
+		assertEquals("The game was loading when this was asked, so the player's inventory couldn't be read. They haven't "
+			+ "logged out: try once more, or answer without it.", loading.result.content);
+		assertNotEquals(CLIENT_THREAD, loading.thread);
+		game.busy = GameDataTools.Busy.CHANGING_WORLDS;
+		Ended hopping = run(tools(), "get_slayer_task", new JsonObject());
+		assertTrue(hopping.result.error);
+		assertEquals("The game was changing worlds when this was asked, so the player's Slayer task couldn't be read. "
+			+ "They haven't logged out: try once more, or answer without it.", hopping.result.content);
+		game.busy = GameDataTools.Busy.RECONNECTING;
+		Ended reconnecting = run(tools(), "get_bank", new JsonObject());
+		assertTrue(reconnecting.result.error);
+		assertEquals("The game was reconnecting when this was asked, so the player's bank couldn't be read. They haven't "
+			+ "logged out: try once more, or answer without it.", reconnecting.result.content);
+		assertEquals(0, game.reads.get());
+		assertEquals(CLIENT_THREAD, game.busyOn);
+		assertEquals(Arrays.asList("Couldn't read your inventory: the game was loading",
+			"Couldn't read your Slayer task: the game was changing worlds",
+			"Couldn't read your bank: the game was reconnecting"), activity);
+
+		// Nothing was shared: a request that had stopped keeps each line as it is, and the panel shows it as it is.
+		for (String line : activity)
+		{
+			assertEquals(line, GameDataTools.unshared(line));
+			PanelText.Summary summary = PanelText.summary(Collections.singletonList(GameDataTools.unshared(line)));
+			assertEquals(null, summary.sharing);
+			assertEquals(line, summary.other);
+		}
+	}
+
+	@Test
+	public void theLoginScreenStillAsksThemToLogIn() throws Exception
+	{
+		// What GameData says for the login screen, logging in and the client starting up.
+		game.loggedIn = false;
+		game.busy = null;
+		Ended e = run(tools(), "get_equipment", new JsonObject());
+		assertTrue(e.result.error);
+		assertEquals("The player isn't logged in, so their equipment can't be read. Ask them to log in first.", e.result.content);
+		String line = "Couldn't share your equipment: you're not logged in";
+		assertEquals(Collections.singletonList(line), activity);
+		assertEquals(line, GameDataTools.unshared(line));
+		assertEquals(line, PanelText.summary(Collections.singletonList(GameDataTools.unshared(line))).other);
+	}
+
+	@Test
+	public void aFailedBusyCheckIsAnErrorNotAHang() throws Exception
+	{
+		// Asked on the client thread, where the time limit is off already: failing there must still end the call.
+		game.loggedIn = false;
+		game.failure = new IllegalStateException("no game state");
+		Ended e = run(tools(), "get_inventory", new JsonObject());
+		assertTrue(e.result.error);
+		assertEquals("Reading the game failed inside AI Chat. Answer without it.", e.result.content);
+		assertNotEquals(CLIENT_THREAD, e.thread);
+		assertEquals(0, game.reads.get());
+		assertEquals(Collections.singletonList("Couldn't read your inventory"), activity);
 	}
 
 	@Test
