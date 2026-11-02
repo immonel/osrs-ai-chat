@@ -86,7 +86,18 @@ there's no server in between.
   your bank as it was the last time you had it open while this setting was on (on the account you're logged in to),
   with Grand Exchange prices, when a question needs them. AI Chat keeps that last look at your bank in memory only,
   and only while this setting and AI Chat itself are on.
-- Character, Slayer, diary and item look-ups only work while you're logged in.
+- **Only while "Share where you are" is on:** the assistant can look at where you're standing when a question needs
+  it, for answers about getting somewhere or what's worth doing nearby. It gets the name of the area (RuneLite's name
+  for that part of the map, and a landmark if one is close: "Varrock, near the west bank"; where that part of the map
+  has no name, the nearest place that has one, with roughly how far away and which way it is), whether you're
+  upstairs, underground, on a boat or in an instance (a raid or a player-owned house, say), and what the game says
+  about other players attacking you there: whether you're in the Wilderness and at what level (or inside its borders
+  where the game says you aren't in it, as in Ferox Enclave), in another PvP area, or on a PvP or High Risk world.
+  Never your exact coordinates, and nothing about what's around you. Like the other look-ups, what it saw goes to the
+  provider with the reply it was for (and to Claude again with later messages in that chat while RuneLite stays
+  open), and the reply itself may mention where you were, which stays in the chat. Turning the setting off stops any
+  new look at once, even in a reply already being written.
+- Character, Slayer, diary, item and location look-ups only work while you're logged in.
 - **Sent to the OSRS Wiki while "Wiki look-ups" is on (it is by default):** the search words and page titles the
   assistant looks up, and your IP address, go to oldschool.runescape.wiki. AI Chat adds nothing about your account,
   but the assistant writes the search words itself, from your question and anything you've shared with it, such as
@@ -97,8 +108,8 @@ there's no server in between.
   and when you change the provider, key or URL, all only while **Enable AI requests** is on; and again when you
   choose **Test connection**, or **Refresh list** in the model picker's menu. That sends the key and your IP address,
   nothing else, and the list is only kept in memory.
-- **Never sent:** your account or login details, where you are in the game, what's around you, and anything about
-  other players.
+- **Never sent:** your account or login details, what's around you in the game, and anything about other players.
+  Where you are is only looked at while "Share where you are" is on (see above for where a look goes once made).
 - **Your API key** is only sent to the provider it belongs to (never over plain `http://` to another computer on the
   internet). RuneLite keeps it with your other settings, unencrypted on your computer, and on RuneLite's servers if
   you use profile sync.
@@ -150,6 +161,7 @@ pick the model in the AI Chat panel, next to Send.
 | | Thinking | Short (faster) | How long a reasoning model thinks first; *Model default* leaves it to the service |
 | Data & privacy | Share character details | off | Name, account type, levels and quests with your messages; Slayer task and diaries when needed (see Privacy) |
 | | Share items and gear | off | Equipment, inventory and bank (as last seen) when needed (see Privacy) |
+| | Share where you are | off | The area you're standing in, which floor, and whether you can be attacked there, when needed (see Privacy) |
 | | Save chat history | on | Keep chats when RuneLite closes (saved on this computer) |
 | Notifications & game chat | Notify on reply | on | RuneLite notification when a reply arrives (enable *send when focused* to get it while playing) |
 | | Show replies in game chat | on | Echo replies into the chatbox |
@@ -165,4 +177,7 @@ think by default will think a little; for those, set *Thinking* in the Other (Op
 default*.
 
 Independent project, not affiliated with or endorsed by Anthropic, OpenAI, Jagex or RuneLite. The assistant can't
-control the game, and sees only what you choose to share (see [Privacy](#privacy)). BSD-2-Clause.
+control the game, and sees only what you choose to share (see [Privacy](#privacy)). BSD-2-Clause. The names of the
+map's areas are RuneLite's own, copied from its Discord plugin under RuneLite's BSD-2-Clause licence (Copyright (c)
+2018, Tomas Slusny; Copyright (c) 2018, PandahRS; Copyright (c) 2020, Brooklyn); the full notice is in
+[THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES), which also ships inside the plugin.

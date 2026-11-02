@@ -103,14 +103,24 @@ public class ToolBoxTest
 		{
 			return Collections.emptyList();
 		}
+
+		@Override
+		public GameData.Location location()
+		{
+			return new GameData.Location(3185, 3436, 0, false, false, false, 0, false, null, false);
+		}
 	}
+
+	/** "Share where you are" when the message was sent: off unless a test turns it on. */
+	private boolean shareLocation;
 
 	/** The tools for a request sent with these settings, as the plugin makes them. */
 	private ToolBox tools(boolean wikiLookups, boolean shareItems, boolean shareCharacter)
 	{
 		ToolBox.Parts parts = new ToolBox.Parts(wiki, new OnePrice(), new Game(), Runnable::run, executor, () -> true,
-			() -> true);
-		RequestRunner.Setup setup = new RequestRunner.Setup(null, "m", "s", shareCharacter, shareItems, wikiLookups);
+			() -> true, () -> true);
+		RequestRunner.Setup setup = new RequestRunner.Setup(null, "m", "s", shareCharacter, shareItems, wikiLookups,
+			shareLocation);
 		return parts.forRequest(setup, () -> true, activity::add, started::incrementAndGet);
 	}
 
@@ -134,6 +144,16 @@ public class ToolBoxTest
 			names(tools(false, false, true).specs()));
 		// GE prices need nothing from the player and send nothing anywhere: always there.
 		assertEquals(Collections.singletonList("ge_price"), names(tools(false, false, false).specs()));
+	}
+
+	@Test
+	public void whereThePlayerIsComesLast()
+	{
+		// The newest sharing setting, so the last tool: the others keep their places in the cached prompt.
+		shareLocation = true;
+		assertEquals(Arrays.asList("wiki_search", "wiki_page", "ge_price", "get_equipment", "get_inventory", "get_bank",
+			"get_slayer_task", "get_achievement_diaries", "get_location"), names(tools(true, true, true).specs()));
+		assertEquals(Arrays.asList("ge_price", "get_location"), names(tools(false, false, false).specs()));
 	}
 
 	@Test

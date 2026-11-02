@@ -24,9 +24,13 @@ import static org.junit.Assert.assertTrue;
 public class GameDataToolsTest
 {
 	private static final String CLIENT_THREAD = "test client thread";
-	/** The settings that let the assistant see the player's items, and their character, as the settings panel names them. */
+	/**
+	 * The settings that let the assistant see the player's items, their character and where they are, as the settings
+	 * panel names them.
+	 */
 	private static final String ITEMS = SettingName.of("shareItems");
 	private static final String CHARACTER = SettingName.of("sendCharacter");
+	private static final String LOCATION = SettingName.of("shareLocation");
 
 	private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
 	/** Stands in for the game's client thread. */
@@ -35,6 +39,7 @@ public class GameDataToolsTest
 	private final List<String> activity = new CopyOnWriteArrayList<>();
 	private boolean shareItems = true;
 	private boolean shareCharacter = true;
+	private boolean shareLocation = true;
 
 	@After
 	public void stop()
@@ -48,6 +53,8 @@ public class GameDataToolsTest
 	{
 		boolean loggedIn = true;
 		GameData.Bank bank;
+		/** Varrock west bank, on the ground floor of an ordinary world. Null for a game that has no position to give. */
+		GameData.Location at = new GameData.Location(3185, 3436, 0, false, false, false, 0, false, null, false);
 		RuntimeException failure;
 		final AtomicInteger reads = new AtomicInteger();
 		volatile String readOn;
@@ -102,12 +109,19 @@ public class GameDataToolsTest
 			read();
 			return GameData.diaries(id -> 1);
 		}
+
+		@Override
+		public GameData.Location location()
+		{
+			read();
+			return at;
+		}
 	}
 
 	private GameDataTools tools(Consumer<Runnable> clientThread, long timeoutMillis)
 	{
-		return new GameDataTools(game, clientThread, executor, () -> shareItems, () -> shareCharacter, activity::add,
-			timeoutMillis);
+		return new GameDataTools(game, clientThread, executor, () -> shareItems, () -> shareCharacter,
+			() -> shareLocation, activity::add, timeoutMillis);
 	}
 
 	private GameDataTools tools()
@@ -151,17 +165,23 @@ public class GameDataToolsTest
 	@Test
 	public void offersOnlyWhatTheSettingsShare()
 	{
-		assertEquals(Arrays.asList("get_equipment", "get_inventory", "get_bank", "get_slayer_task", "get_achievement_diaries"),
-			names(tools().specs()));
+		assertEquals(Arrays.asList("get_equipment", "get_inventory", "get_bank", "get_slayer_task",
+			"get_achievement_diaries", "get_location"), names(tools().specs()));
 		shareCharacter = false;
-		assertEquals(Arrays.asList("get_equipment", "get_inventory", "get_bank"), names(tools().specs()));
+		assertEquals(Arrays.asList("get_equipment", "get_inventory", "get_bank", "get_location"), names(tools().specs()));
 		shareItems = false;
 		shareCharacter = true;
+		assertEquals(Arrays.asList("get_slayer_task", "get_achievement_diaries", "get_location"), names(tools().specs()));
+		shareLocation = false;
 		assertEquals(Arrays.asList("get_slayer_task", "get_achievement_diaries"), names(tools().specs()));
 		shareCharacter = false;
 		assertTrue(tools().specs().isEmpty());
+		// Where the player is has a setting of its own: nothing else being shared doesn't keep it from being offered.
+		shareLocation = true;
+		assertEquals(Collections.singletonList("get_location"), names(tools().specs()));
 
-		for (String name : Arrays.asList("get_equipment", "get_inventory", "get_bank", "get_slayer_task", "get_achievement_diaries"))
+		for (String name : Arrays.asList("get_equipment", "get_inventory", "get_bank", "get_slayer_task",
+			"get_achievement_diaries", "get_location"))
 		{
 			assertTrue(name, GameDataTools.handles(name));
 		}
@@ -276,6 +296,61 @@ public class GameDataToolsTest
 	}
 
 	@Test
+	public void sharesWhereThePlayerIs() throws Exception
+	{
+		Ended e = run(tools(), "get_location", new JsonObject());
+		assertFalse(e.result.error);
+		assertTrue(e.result.content, e.result.content.startsWith("Place: Varrock, near the west bank. In the Wilderness: no"));
+		assertEquals(CLIENT_THREAD, game.readOn);
+		assertNotEquals(CLIENT_THREAD, e.thread);
+		assertEquals(Collections.singletonList("Shared your location"), activity);
+		// The panel names it over the reply like the rest, and says so only while it was really shared.
+		assertEquals("Shared your location", PanelText.summary(activity).sharing);
+		assertEquals("Read your location, but didn't share it: the request had stopped",
+			GameDataTools.unshared("Shared your location"));
+	}
+
+	@Test
+	public void sharesNoLocationWithTheSettingOff() throws Exception
+	{
+		// Offered earlier in the reply, then turned off: the next call is turned down without reading the game.
+		GameDataTools tools = tools();
+		shareLocation = false;
+		Ended e = run(tools, "get_location", new JsonObject());
+		assertTrue(e.result.error);
+		assertEquals("The player hasn't turned on \"" + LOCATION + "\" in AI Chat's settings, so their location can't be "
+			+ "read. They can turn it on if they'd like you to see it.", e.result.content);
+		assertEquals(0, game.reads.get());
+		assertEquals(Collections.singletonList("Didn't share your location: \"" + LOCATION + "\" is off"), activity);
+	}
+
+	@Test
+	public void needsThePlayerLoggedInToSayWhereTheyAre() throws Exception
+	{
+		game.loggedIn = false;
+		Ended e = run(tools(), "get_location", new JsonObject());
+		assertTrue(e.result.error);
+		assertEquals("The player isn't logged in, so their location can't be read. Ask them to log in first.",
+			e.result.content);
+		assertEquals(0, game.reads.get());
+		assertEquals(Collections.singletonList("Couldn't share your location: you're not logged in"), activity);
+	}
+
+	@Test
+	public void aPlayerWithNoPositionYetIsSaidToBeLoading() throws Exception
+	{
+		// Logged in, but between places: the game has no position to give until it's loaded one. That's ordinary, so it
+		// isn't put to the model as AI Chat failing.
+		game.at = null;
+		Ended e = run(tools(), "get_location", new JsonObject());
+		assertTrue(e.result.error);
+		assertEquals("The game hadn't placed the player anywhere yet, as happens on a loading screen, so where they are "
+			+ "couldn't be read. Try once more in a moment, or answer without it.", e.result.content);
+		assertFalse(e.result.content, e.result.content.contains("failed"));
+		assertEquals(Collections.singletonList("Couldn't read your location: the game was loading"), activity);
+	}
+
+	@Test
 	public void aFailedReadIsAnErrorNotACrash() throws Exception
 	{
 		game.failure = new IllegalStateException("no item data");
@@ -317,20 +392,21 @@ public class GameDataToolsTest
 	@Test
 	public void unknownTool() throws Exception
 	{
-		Ended e = run(tools(), "get_location", new JsonObject());
+		Ended e = run(tools(), "get_quest_points", new JsonObject());
 		assertTrue(e.result.error);
-		assertEquals("There's no tool called get_location.", e.result.content);
+		assertEquals("There's no tool called get_quest_points.", e.result.content);
 		assertEquals(0, game.reads.get());
-		assertEquals(Collections.singletonList("Skipped an unknown look-up \"get_location\""), activity);
+		assertEquals(Collections.singletonList("Skipped an unknown look-up \"get_quest_points\""), activity);
 	}
 
 	@Test
 	public void aBrokenActivityLineStillEndsTheCall() throws Exception
 	{
-		GameDataTools tools = new GameDataTools(game, client::execute, executor, () -> true, () -> true, line ->
-		{
-			throw new IllegalStateException("panel gone");
-		});
+		GameDataTools tools = new GameDataTools(game, client::execute, executor, () -> true, () -> true, () -> true,
+			line ->
+			{
+				throw new IllegalStateException("panel gone");
+			});
 		Ended e = run(tools, "get_equipment", new JsonObject());
 		assertFalse(e.result.error);
 	}

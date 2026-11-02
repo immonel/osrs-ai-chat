@@ -12,7 +12,8 @@ public class SystemPromptTest
 	{
 		String items = SettingName.of("shareItems");
 		String character = SettingName.of("sendCharacter");
-		assertTrue(AiChatPlugin.SYSTEM_PROMPT.contains("(\"" + items + "\" or \"" + character + "\")"));
+		String location = SettingName.of("shareLocation");
+		assertTrue(AiChatPlugin.SYSTEM_PROMPT.contains("(\"" + items + "\", \"" + character + "\" or \"" + location + "\")"));
 		assertFalse("the old name", AiChatPlugin.SYSTEM_PROMPT.contains("Send character info"));
 	}
 
