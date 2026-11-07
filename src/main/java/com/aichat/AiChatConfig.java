@@ -104,11 +104,13 @@ public interface AiChatConfig extends Config
 
 	// General
 
+	// RuneLite shows a setting's warning on every change, switching it off as well as on, so each warning says what
+	// happens while the setting is on.
 	@ConfigItem(
 		keyName = "aiRequests",
 		name = "Enable AI requests",
 		description = "Send your messages to the AI provider you choose. Nothing is sent anywhere while this is off, Wiki look-ups included.",
-		warning = "This feature submits your IP address and the messages you type to the AI provider you choose, and (with \"Wiki look-ups\", on by default) the search words and page titles the assistant looks up to the OSRS Wiki: 3rd-party servers not controlled or verified by RuneLite developers.",
+		warning = "While this is on, AI Chat submits your IP address and the messages you type to the AI provider you choose, and (with \"Wiki look-ups\", on by default) the search words and page titles the assistant looks up to the OSRS Wiki: 3rd-party servers not controlled or verified by RuneLite developers.",
 		section = GENERAL,
 		position = 0
 	)
@@ -264,7 +266,7 @@ public interface AiChatConfig extends Config
 		keyName = "sendCharacter",
 		name = "Share character details",
 		description = "Send your character name, account type (ironman or not), levels and quest progress with your messages, and let the assistant look up your Slayer task and achievement diaries, for answers that fit your account. Off by default.",
-		warning = "This feature submits your IP address, character name, account type, skill levels, quest progress, Slayer task and achievement diaries with your messages to the AI provider you choose: a 3rd-party server not controlled or verified by RuneLite developers.",
+		warning = "While this is on, AI Chat submits your IP address, character name, account type, skill levels, quest progress, Slayer task and achievement diaries with your messages to the AI provider you choose: a 3rd-party server not controlled or verified by RuneLite developers.",
 		section = PRIVACY,
 		position = 0
 	)
@@ -277,7 +279,7 @@ public interface AiChatConfig extends Config
 		keyName = "shareItems",
 		name = "Share items and gear",
 		description = "Let the assistant look at your equipment, inventory and bank (as it was when you last had it open) when a question needs them. Each look is listed with the reply. Off by default.",
-		warning = "This feature submits your IP address and the items you wear, carry and keep in your bank, with their prices, to the AI provider you choose when the assistant looks at them: a 3rd-party server not controlled or verified by RuneLite developers.",
+		warning = "While this is on, AI Chat submits your IP address and the items you wear, carry and keep in your bank, with their prices, to the AI provider you choose when the assistant looks at them: a 3rd-party server not controlled or verified by RuneLite developers.",
 		section = PRIVACY,
 		position = 1
 	)
