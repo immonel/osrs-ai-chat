@@ -264,7 +264,7 @@ final class GameDataTools implements ChatApi.ToolRunner
 			report.send(settingOff(what, ITEMS_SETTING));
 			return;
 		}
-		readThenWrite(report, what, read, write);
+		readThenWrite(report, what, shareItems, ITEMS_SETTING, read, write);
 	}
 
 	/** Slayer task and diaries: only with "Share character details". */
@@ -275,7 +275,7 @@ final class GameDataTools implements ChatApi.ToolRunner
 			report.send(settingOff(what, CHARACTER_SETTING));
 			return;
 		}
-		readThenWrite(report, what, read, write);
+		readThenWrite(report, what, shareCharacter, CHARACTER_SETTING, read, write);
 	}
 
 	private static Outcome settingOff(String what, String setting)
@@ -287,9 +287,12 @@ final class GameDataTools implements ChatApi.ToolRunner
 
 	/**
 	 * Reads on the client thread, then writes the answer up off it: the reply carries on from {@code done} (building
-	 * and sending the next request), which shouldn't hold up the game.
+	 * and sending the next request), which shouldn't hold up the game. {@code allowed}, the {@code setting} that shares
+	 * this, is asked again at each step: it can be turned off while the read waits for the client thread, and while the
+	 * result waits for the round's other calls.
 	 */
-	private <T> void readThenWrite(Report report, String what, Supplier<T> read, Function<T, Outcome> write)
+	private <T> void readThenWrite(Report report, String what, BooleanSupplier allowed, String setting, Supplier<T> read,
+		Function<T, Outcome> write)
 	{
 		Future<?> timeout = null;
 		try
@@ -312,18 +315,21 @@ final class GameDataTools implements ChatApi.ToolRunner
 			{
 				limit.cancel(false);
 			}
+			boolean sharing;
 			boolean loggedIn;
 			T value;
 			try
 			{
+				sharing = allowed.getAsBoolean();
 				loggedIn = game.loggedIn();
-				Busy busy = loggedIn ? null : game.busy();
+				// Only while sharing: with the setting off, the write-up below says so instead.
+				Busy busy = sharing && !loggedIn ? game.busy() : null;
 				if (busy != null)
 				{
 					handBack(() -> report.write(what, () -> stillLoggedIn(what, busy)));
 					return;
 				}
-				value = loggedIn ? read.get() : null;
+				value = sharing && loggedIn ? read.get() : null;
 			}
 			catch (RuntimeException e)
 			{
@@ -332,7 +338,16 @@ final class GameDataTools implements ChatApi.ToolRunner
 				handBack(() -> report.send(new Outcome("Couldn't read your " + what, ChatApi.ToolResult.error(FAILED))));
 				return;
 			}
-			handBack(() -> report.write(what, () -> loggedIn ? write.apply(value) : notLoggedIn(what)));
+			handBack(() -> report.write(what, () ->
+			{
+				if (!sharing || !allowed.getAsBoolean())
+				{
+					return settingOff(what, setting);
+				}
+				Outcome o = loggedIn ? write.apply(value) : notLoggedIn(what);
+				// Turned off after this, it isn't sent but is still listed as shared, like a result held up by a Stop.
+				return new Outcome(o.line, o.result.onlyWhile(allowed, settingOff(what, setting).result));
+			}));
 		};
 		try
 		{
