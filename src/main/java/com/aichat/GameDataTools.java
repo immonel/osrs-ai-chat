@@ -77,6 +77,7 @@ final class GameDataTools implements ChatApi.ToolRunner
 	private final BooleanSupplier shareCharacter;
 	private final Consumer<String> activity;
 	private final long timeoutMillis;
+	private final LookupSize size;
 
 	/**
 	 * {@code shareItems} and {@code shareCharacter}: the settings, read again for every call, so turning one off while
@@ -85,12 +86,26 @@ final class GameDataTools implements ChatApi.ToolRunner
 	GameDataTools(Game game, Consumer<Runnable> clientThread, ScheduledExecutorService executor,
 		BooleanSupplier shareItems, BooleanSupplier shareCharacter, Consumer<String> activity)
 	{
-		this(game, clientThread, executor, shareItems, shareCharacter, activity, READ_TIMEOUT_MILLIS);
+		this(game, clientThread, executor, shareItems, shareCharacter, activity, LookupSize.SHORT);
+	}
+
+	GameDataTools(Game game, Consumer<Runnable> clientThread, ScheduledExecutorService executor,
+		BooleanSupplier shareItems, BooleanSupplier shareCharacter, Consumer<String> activity, LookupSize size)
+	{
+		this(game, clientThread, executor, shareItems, shareCharacter, activity, READ_TIMEOUT_MILLIS, size);
 	}
 
 	GameDataTools(Game game, Consumer<Runnable> clientThread, ScheduledExecutorService executor,
 		BooleanSupplier shareItems, BooleanSupplier shareCharacter, Consumer<String> activity, long timeoutMillis)
 	{
+		this(game, clientThread, executor, shareItems, shareCharacter, activity, timeoutMillis, LookupSize.SHORT);
+	}
+
+	GameDataTools(Game game, Consumer<Runnable> clientThread, ScheduledExecutorService executor,
+		BooleanSupplier shareItems, BooleanSupplier shareCharacter, Consumer<String> activity, long timeoutMillis,
+		LookupSize size)
+	{
+		this.size = size;
 		this.game = game;
 		this.clientThread = clientThread;
 		this.executor = executor;
@@ -124,7 +139,8 @@ final class GameDataTools implements ChatApi.ToolRunner
 				schema(new JsonObject())));
 			JsonObject bank = new JsonObject();
 			bank.add("search", property("string", "Optional: only items whose names contain this, e.g. \"rune\" or "
-				+ "\"potion\". Leave it out for the whole bank; a big bank is cut at " + GameData.BANK_LINES + " items."));
+				+ "\"potion\". Leave it out for the whole bank" + (size.bankLines == Integer.MAX_VALUE ? "."
+				: "; a big bank is cut at " + size.bankLines + " items.")));
 			specs.add(new ChatApi.ToolSpec(GET_BANK,
 				"The player's bank as it was the last time they had it open: items and amounts with Grand Exchange "
 					+ "prices, placeholders left out. Unknown until they open their bank.",
@@ -177,7 +193,7 @@ final class GameDataTools implements ChatApi.ToolRunner
 			{
 				String search = search(input);
 				long now = System.currentTimeMillis();
-				readItems(report, "bank", game::bank, bank -> bankOutcome(bank, search, now));
+				readItems(report, "bank", game::bank, bank -> bankOutcome(bank, search, now, size.bankLines));
 			}
 			else if (GET_SLAYER_TASK.equals(name))
 			{
@@ -234,7 +250,7 @@ final class GameDataTools implements ChatApi.ToolRunner
 		return line.startsWith(SEARCHED) ? line + UNSHARED : line;
 	}
 
-	private static Outcome bankOutcome(GameData.Bank bank, String search, long now)
+	private static Outcome bankOutcome(GameData.Bank bank, String search, long now, int max)
 	{
 		if (bank == null)
 		{
@@ -244,7 +260,7 @@ final class GameDataTools implements ChatApi.ToolRunner
 					+ "then ask again."));
 		}
 		String line = search == null ? SHARED + "bank" : SEARCHED + "\"" + ChatApi.shorten(search, 60) + "\"";
-		return new Outcome(line, ChatApi.ToolResult.ok(GameData.bankText(bank, search, now)));
+		return new Outcome(line, ChatApi.ToolResult.ok(GameData.bankText(bank, search, now, max)));
 	}
 
 	/** Equipment, inventory and bank: only with "Share items and gear". */

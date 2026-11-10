@@ -191,6 +191,20 @@ public class GameDataTest
 	}
 
 	@Test
+	public void fullLookUpsListTheWholeBank()
+	{
+		List<GameData.ItemLine> lines = new ArrayList<>();
+		for (int i = 1; i <= 1000; i++)
+		{
+			lines.add(item("Item " + i, 1, 10));
+		}
+		String text = GameData.bankText(new GameData.Bank(lines, 0), null, 0, LookupSize.FULL.bankLines);
+		assertEquals(1000, listed(text));
+		assertFalse(text, text.contains("not listed"));
+		assertFalse(text, text.contains("only the first"));
+	}
+
+	@Test
 	public void longBanksAreCutWithANote()
 	{
 		List<GameData.ItemLine> lines = new ArrayList<>();

@@ -364,7 +364,7 @@ public class AiChatPlugin extends Plugin
 	{
 		ChatApi api = api();
 		return api == null ? null : new RequestRunner.Setup(api, provider.model(), systemPrompt(), config.sendCharacter(),
-			config.shareItems(), config.wikiLookups());
+			config.shareItems(), config.wikiLookups(), LookupSize.of(config.provider(), config.compatibleFullLookups()));
 	}
 
 	private String systemPrompt()

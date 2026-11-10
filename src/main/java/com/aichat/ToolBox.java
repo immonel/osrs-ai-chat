@@ -50,13 +50,14 @@ final class ToolBox implements ChatApi.ToolRunner
 		 */
 		ToolBox forRequest(RequestRunner.Setup setup, BooleanSupplier wanted, Consumer<String> activity, Runnable started)
 		{
-			LookupTools lookups = new LookupTools(setup.wikiLookups ? wiki : null, prices, activity, wanted);
+			LookupTools lookups = new LookupTools(setup.wikiLookups ? wiki : null, prices, activity, wanted,
+				setup.lookupSize);
 			// The settings as they were when the player sent the message, and as they are at each call: turning one off
 			// while a reply is being written stops the sharing at once.
 			GameDataTools gameData = new GameDataTools(game, clientThread, executor,
 				() -> setup.shareItems && shareItems.getAsBoolean(),
 				() -> setup.shareCharacter && shareCharacter.getAsBoolean(),
-				activity);
+				activity, setup.lookupSize);
 			return new ToolBox(lookups, gameData, started);
 		}
 	}
