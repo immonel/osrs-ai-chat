@@ -58,6 +58,26 @@ public interface AiChatConfig extends Config
 		}
 	}
 
+	enum LookupSizeChoice
+	{
+		AUTO("Auto"),
+		FULL("Full"),
+		SHORT("Short");
+
+		private final String label;
+
+		LookupSizeChoice(String label)
+		{
+			this.label = label;
+		}
+
+		@Override
+		public String toString()
+		{
+			return label;
+		}
+	}
+
 	@ConfigSection(
 		name = "General",
 		description = "Turn AI requests on, choose who answers, and add your own instructions",
@@ -151,6 +171,18 @@ public interface AiChatConfig extends Config
 	default boolean wikiLookups()
 	{
 		return true;
+	}
+
+	@ConfigItem(
+		keyName = "lookupSize",
+		name = "Look-up size",
+		description = "How much each look-up hands the assistant: your bank, Wiki pages, search results and prices. Full gives your whole bank and longer Wiki pages; Short keeps them small, for models with little room. Auto is Full for Claude and ChatGPT and Short for other services: pick Full for large models there (most on OpenRouter), or Short to make Claude or ChatGPT requests cheaper.",
+		section = GENERAL,
+		position = 4
+	)
+	default LookupSizeChoice lookupSize()
+	{
+		return LookupSizeChoice.AUTO;
 	}
 
 	// Claude
@@ -256,18 +288,6 @@ public interface AiChatConfig extends Config
 	default Thinking compatibleThinking()
 	{
 		return Thinking.SHORT;
-	}
-
-	@ConfigItem(
-		keyName = "compatibleFullLookups",
-		name = "Full look-ups",
-		description = "Give the assistant your whole bank, longer Wiki pages and more search results and prices in each look-up, as Claude and ChatGPT always get. Turn it on for large models (most on OpenRouter); leave it off for small models on your own computer, which may run out of room.",
-		section = COMPATIBLE_SECTION,
-		position = 4
-	)
-	default boolean compatibleFullLookups()
-	{
-		return false;
 	}
 
 	// Data & privacy

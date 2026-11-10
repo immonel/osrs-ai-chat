@@ -3,7 +3,7 @@ package com.aichat;
 /**
  * How much the tools hand back in one answer. Claude and ChatGPT models have room for a whole bank and long Wiki
  * pages; a small model on the player's own computer (Ollama, LM Studio) may have only a few thousand tokens, so for
- * the OpenAI-compatible provider the short sizes stay unless "Full look-ups" is on. Whatever the size, a cut list or
+ * the OpenAI-compatible provider the short sizes stay unless "Look-up size" says Full. Whatever the size, a cut list or
  * page says so.
  */
 enum LookupSize
@@ -33,9 +33,17 @@ enum LookupSize
 		this.priceResults = priceResults;
 	}
 
-	/** The size for the chosen provider: full for Claude and ChatGPT, and for any other service when asked for. */
-	static LookupSize of(AiChatConfig.Provider provider, boolean fullLookups)
+	/** The size the player chose; Auto is full for Claude and ChatGPT and short for any other service. */
+	static LookupSize of(AiChatConfig.Provider provider, AiChatConfig.LookupSizeChoice choice)
 	{
-		return provider == AiChatConfig.Provider.OPENAI_COMPATIBLE && !fullLookups ? SHORT : FULL;
+		switch (choice)
+		{
+			case FULL:
+				return FULL;
+			case SHORT:
+				return SHORT;
+			default:
+				return provider == AiChatConfig.Provider.OPENAI_COMPATIBLE ? SHORT : FULL;
+		}
 	}
 }

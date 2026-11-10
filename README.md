@@ -144,11 +144,11 @@ pick the model in the AI Chat panel, next to Send.
 | | Provider | Claude | Claude, ChatGPT, or an OpenAI-compatible service |
 | | Custom instructions | | Added to what the assistant is told, for example "I'm an ironman" |
 | | Wiki look-ups | on | Lets the assistant search and read the OSRS Wiki while it answers (see Privacy). GE prices come from RuneLite's own price data and work with this off |
+| | Look-up size | Auto | How much of your bank and the Wiki each look-up hands the assistant. *Auto* is Full (whole bank, long Wiki pages) for Claude and ChatGPT and Short for other services. Pick Full for large models on OpenRouter, or Short for cheaper Claude or ChatGPT requests |
 | Claude | API key / Model | / `claude-opus-5-5` | Any Claude model, for example `claude-sonnet-5-5` or `claude-haiku-4-5` |
 | ChatGPT | API key / Model | / `gpt-6-luna` | Any OpenAI chat model, for example `gpt-6.1-sol` |
 | Other (OpenAI-compatible) | Base URL / API key / Model | | The service's base URL (usually ending in `/v1`), key if it needs one, and model name |
 | | Thinking | Short (faster) | How long a reasoning model thinks first; *Model default* leaves it to the service |
-| | Full look-ups | Off | Whole bank, longer Wiki pages and more results per look-up, as Claude and ChatGPT always get. On for large models; off for small local ones |
 | Data & privacy | Share character details | off | Name, account type, levels and quests with your messages; Slayer task and diaries when needed (see Privacy) |
 | | Share items and gear | off | Equipment, inventory and bank (as last seen) when needed (see Privacy) |
 | | Save chat history | on | Keep chats when RuneLite closes (saved on this computer) |
