@@ -124,7 +124,8 @@ final class GameDataTools implements ChatApi.ToolRunner
 				schema(new JsonObject())));
 			JsonObject bank = new JsonObject();
 			bank.add("search", property("string", "Optional: only items whose names contain this, e.g. \"rune\" or "
-				+ "\"potion\". Leave it out for the whole bank; a big bank is cut at " + GameData.BANK_LINES + " items."));
+				+ "\"potion\". Leave it out for the whole bank, which is best for gear and setup advice; a big bank is "
+				+ "cut at " + GameData.BANK_LINES + " items."));
 			specs.add(new ChatApi.ToolSpec(GET_BANK,
 				"The player's bank as it was the last time they had it open: items and amounts with Grand Exchange "
 					+ "prices, placeholders left out. Unknown until they open their bank.",
