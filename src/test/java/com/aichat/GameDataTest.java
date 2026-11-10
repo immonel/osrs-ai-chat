@@ -200,8 +200,11 @@ public class GameDataTest
 		}
 		String text = GameData.bankText(new GameData.Bank(lines, 0), null, 0);
 		assertEquals(GameData.BANK_LINES, listed(text));
-		assertTrue(text, text.contains("\n- Item 300 (10 gp)\n...and 50 more items not listed. Ask again with search to "
-			+ "find particular items.\n"));
+		// Said up front and at the cut, so the model doesn't take the list for the whole bank.
+		assertTrue(text, text.contains("350 items, only the first 300 listed, placeholders left out."));
+		assertTrue(text, text.contains("\n- Item 300 (10 gp)\n...and 50 more items not listed: this list is incomplete. "
+			+ "Something missing from it may still be in the bank, so search for it by name before saying they don't "
+			+ "have it.\n"));
 		assertFalse(text, text.contains("Item 301"));
 		// The total still covers the whole bank.
 		assertTrue(text, text.endsWith("Total value of the bank at Grand Exchange prices: 3,500 gp."));
@@ -210,6 +213,7 @@ public class GameDataTest
 		// "Item 1", "Item 10".."Item 19", "Item 100".."Item 199": 111, all listed.
 		assertEquals(111, listed(found));
 		assertFalse(found, found.contains("not listed"));
+		assertFalse(found, found.contains("only the first"));
 	}
 
 	@Test

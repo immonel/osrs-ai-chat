@@ -102,11 +102,14 @@ final class WikiClient
 		final List<SearchResult> results;
 		/** The Wiki's "did you mean", or null. */
 		final String suggestion;
+		/** How many pages match in all, listed or not; -1 when the Wiki didn't say. */
+		final int totalHits;
 
-		Search(List<SearchResult> results, String suggestion)
+		Search(List<SearchResult> results, String suggestion, int totalHits)
 		{
 			this.results = results;
 			this.suggestion = suggestion;
+			this.totalHits = totalHits;
 		}
 	}
 
@@ -437,7 +440,9 @@ final class WikiClient
 		}
 		JsonObject info = object(query, "searchinfo");
 		String suggestion = info == null ? null : string(info, "suggestion");
-		return new Search(results, suggestion == null ? null : plainText(suggestion));
+		JsonElement total = info == null ? null : info.get("totalhits");
+		int totalHits = total != null && total.isJsonPrimitive() && total.getAsJsonPrimitive().isNumber() ? total.getAsInt() : -1;
+		return new Search(results, suggestion == null ? null : plainText(suggestion), totalHits);
 	}
 
 	private static Page page(JsonObject o, int section)

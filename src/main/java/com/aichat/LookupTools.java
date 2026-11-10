@@ -409,6 +409,13 @@ final class LookupTools implements ChatApi.ToolRunner
 				out.append("\n   ").append(ChatApi.shorten(r.snippet, SNIPPET_CHARS));
 			}
 		}
+		if (search.totalHits > n)
+		{
+			int more = search.totalHits - n;
+			out.append("\n[Only the best ").append(n).append(" listed; ").append(more)
+				.append(more == 1 ? " more page matches" : " more pages match")
+				.append(". If none of these fits, search again with other or more specific words.]");
+		}
 		return out.toString();
 	}
 
