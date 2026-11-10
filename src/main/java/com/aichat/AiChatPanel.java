@@ -112,7 +112,7 @@ class AiChatPanel extends PluginPanel
 	final JComboBox<Chat> chatSelect = new TitleSelect(chatModel);
 	final FlatButton newChat = new FlatButton(null, new Glyph(Glyph.Shape.PLUS, 14), "New chat");
 	final FlatButton menu = new FlatButton(null, new Glyph(Glyph.Shape.MORE, 14),
-		"Rename, clear or delete this chat, or test the connection");
+		"Copy, rename, clear or delete this chat, or test the connection");
 	final Banner banner;
 	private final CardLayout cards = new CardLayout();
 	private final JPanel center = new JPanel(cards);
@@ -620,6 +620,12 @@ class AiChatPanel extends PluginPanel
 			return;
 		}
 		JPopupMenu popup = new JPopupMenu();
+		String text = chat.plainText();
+		JMenuItem copy = PanelStyle.menuItem("Copy chat");
+		copy.setEnabled(!text.isEmpty());
+		copy.setToolTipText(text.isEmpty() ? "Nothing to copy yet" : "Copy the whole chat as plain text");
+		copy.addActionListener(e -> MessageView.toClipboard(text));
+		popup.add(copy);
 		popup.add(PanelStyle.menuItem("Rename…")).addActionListener(e ->
 		{
 			String name = JOptionPane.showInputDialog(this, "Chat name:", chat.name);

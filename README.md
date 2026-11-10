@@ -13,7 +13,7 @@ look things up on the OSRS Wiki while it answers. Uses your own API key. Free an
 - A chat panel in the RuneLite sidebar that works like the AI chat apps you know: your messages in bubbles on the
   right, replies across the panel, "Ask anything..." at the bottom, and a few ideas to start a new chat with. Keep
   several chats: the chat's title at the top switches between them, **+** starts a new one, and the **⋯** menu
-  renames, clears or deletes it
+  copies the whole chat as plain text, or renames, clears or deletes it
 - `::ai <message>` in the chatbox to ask without opening the panel (or `::ai` alone, or a hotkey you pick in the
   settings, to open an "Ask:" box); the line is handled by the plugin and isn't sent to the game
 - Replies appear in the panel as they're written, with light formatting (lists, bold, tables, links you can click).

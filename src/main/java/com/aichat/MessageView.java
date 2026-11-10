@@ -620,7 +620,7 @@ class MessageView extends JTextPane
 		menu.show(this, e.getX(), e.getY());
 	}
 
-	private static void toClipboard(String text)
+	static void toClipboard(String text)
 	{
 		try
 		{
