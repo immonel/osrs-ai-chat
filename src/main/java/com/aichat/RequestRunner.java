@@ -72,9 +72,18 @@ final class RequestRunner
 		final boolean shareCharacter;
 		final boolean shareItems;
 		final boolean wikiLookups;
+		/** How much each look-up hands back. */
+		final LookupSize lookupSize;
 
 		Setup(ChatApi api, String model, String system, boolean shareCharacter, boolean shareItems, boolean wikiLookups)
 		{
+			this(api, model, system, shareCharacter, shareItems, wikiLookups, LookupSize.SHORT);
+		}
+
+		Setup(ChatApi api, String model, String system, boolean shareCharacter, boolean shareItems, boolean wikiLookups,
+			LookupSize lookupSize)
+		{
+			this.lookupSize = lookupSize;
 			this.api = api;
 			this.model = model;
 			this.system = system;

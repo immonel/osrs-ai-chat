@@ -43,12 +43,11 @@ final class LookupTools implements ChatApi.ToolRunner
 	static final String READ_WIKI_PAGE = "Read the Wiki page ";
 	static final String CHECKED_GE_PRICE = "Checked the GE price of ";
 
-	static final int SEARCH_RESULTS = 6;
-	/** Wikitext per wiki_page, about 3,000 tokens: most pages fit, and reading a few stays cheap. */
-	static final int PAGE_CHARS = 12_000;
-	/** A page longer than this lists its sections even when it fits, so the model can ask for one next time. */
-	static final int LONG_PAGE_CHARS = 6_000;
-	static final int PRICE_RESULTS = 5;
+	/**
+	 * The short sizes (see {@link LookupSize}). Wikitext per wiki_page, about 3,000 tokens: most pages fit, and reading
+	 * a few stays cheap.
+	 */
+	static final int PAGE_CHARS = LookupSize.SHORT.pageChars;
 	private static final int SNIPPET_CHARS = 200;
 	private static final int MAX_SECTIONS_LISTED = 80;
 	/** The Wiki takes at most 300 characters of search, and titles are at most 255. */
@@ -82,6 +81,7 @@ final class LookupTools implements ChatApi.ToolRunner
 	private final Consumer<String> activity;
 	/** False once the reply these look-ups are for has stopped: Wiki requests still waiting their turn aren't sent. */
 	private final BooleanSupplier wanted;
+	private final LookupSize size;
 
 	/** Look-ups that are always wanted. */
 	LookupTools(WikiClient wiki, Prices prices, Consumer<String> activity)
@@ -91,6 +91,12 @@ final class LookupTools implements ChatApi.ToolRunner
 
 	LookupTools(WikiClient wiki, Prices prices, Consumer<String> activity, BooleanSupplier wanted)
 	{
+		this(wiki, prices, activity, wanted, LookupSize.SHORT);
+	}
+
+	LookupTools(WikiClient wiki, Prices prices, Consumer<String> activity, BooleanSupplier wanted, LookupSize size)
+	{
+		this.size = size;
 		this.wiki = wiki;
 		this.prices = prices;
 		this.activity = activity;
@@ -115,7 +121,7 @@ final class LookupTools implements ChatApi.ToolRunner
 			search.add("query", property("string",
 				"What to look for, e.g. \"abyssal whip\" or \"barrows gloves requirements\"."));
 			specs.add(new ChatApi.ToolSpec(WIKI_SEARCH,
-				"Search the Old School RuneScape Wiki. Returns up to " + SEARCH_RESULTS + " page titles with links and a "
+				"Search the Old School RuneScape Wiki. Returns up to " + size.searchResults + " page titles with links and a "
 					+ "snippet each; read one with " + WIKI_PAGE + ".",
 				schema(search, "query")));
 
@@ -137,7 +143,7 @@ final class LookupTools implements ChatApi.ToolRunner
 		quantity.addProperty("minimum", 1);
 		price.add("quantity", quantity);
 		specs.add(new ChatApi.ToolSpec(GE_PRICE,
-			"Current Grand Exchange prices from RuneLite's own price data: up to " + PRICE_RESULTS + " tradeable items "
+			"Current Grand Exchange prices from RuneLite's own price data: up to " + size.priceResults + " tradeable items "
 				+ "whose names contain the text, with their high alchemy values. Untradeable items have no price.",
 			schema(price, "item")));
 		return specs;
@@ -262,12 +268,12 @@ final class LookupTools implements ChatApi.ToolRunner
 				ChatApi.ToolResult.error(WIKI_SEARCH + " needs a query, e.g. {\"query\": \"abyssal whip\"}."));
 			return;
 		}
-		wiki.search(query, SEARCH_RESULTS, wanted, new WikiClient.Listener<WikiClient.Search>()
+		wiki.search(query, size.searchResults, wanted, new WikiClient.Listener<WikiClient.Search>()
 		{
 			@Override
 			public void onResult(WikiClient.Search search)
 			{
-				report.write(SEARCHED_WIKI + quote(query), () -> ChatApi.ToolResult.ok(searchText(query, search)));
+				report.write(SEARCHED_WIKI + quote(query), () -> ChatApi.ToolResult.ok(searchText(query, search, size)));
 			}
 
 			@Override
@@ -308,7 +314,7 @@ final class LookupTools implements ChatApi.ToolRunner
 			public void onResult(WikiClient.Page page)
 			{
 				report.write(READ_WIKI_PAGE + quote(page.title) + sectionName(page, part),
-					() -> ChatApi.ToolResult.ok(pageText(page, part)));
+					() -> ChatApi.ToolResult.ok(pageText(page, part, size)));
 			}
 
 			@Override
@@ -388,7 +394,7 @@ final class LookupTools implements ChatApi.ToolRunner
 		return " (" + (heading == null ? "section " + section : ChatApi.shorten(WikiClient.plainText(heading), 40)) + ")";
 	}
 
-	static String searchText(String query, WikiClient.Search search)
+	static String searchText(String query, WikiClient.Search search, LookupSize size)
 	{
 		if (search.results.isEmpty())
 		{
@@ -399,7 +405,7 @@ final class LookupTools implements ChatApi.ToolRunner
 		int n = 0;
 		for (WikiClient.SearchResult r : search.results)
 		{
-			if (n == SEARCH_RESULTS)
+			if (n == size.searchResults)
 			{
 				break;
 			}
@@ -420,10 +426,10 @@ final class LookupTools implements ChatApi.ToolRunner
 	}
 
 	/**
-	 * The page for the model: its link first (to cite), then the cleaned wikitext, cut to {@link #PAGE_CHARS}. A cut
+	 * The page for the model: its link first (to cite), then the cleaned wikitext, cut to the size's page length. A cut
 	 * or long page ends with its sections, so the model can read just the part it needs.
 	 */
-	static String pageText(WikiClient.Page page, int section)
+	static String pageText(WikiClient.Page page, int section, LookupSize size)
 	{
 		StringBuilder out = new StringBuilder(page.url).append('\n');
 		out.append("Wiki page ").append(quote(page.title));
@@ -437,10 +443,10 @@ final class LookupTools implements ChatApi.ToolRunner
 		}
 		out.append(":\n\n");
 		String text = WikiClient.clean(page.wikitext);
-		boolean cut = text.length() > PAGE_CHARS;
+		boolean cut = text.length() > size.pageChars;
 		if (cut)
 		{
-			text = cut(text, PAGE_CHARS);
+			text = cut(text, size.pageChars);
 		}
 		out.append(text.isEmpty() ? "(This has no text.)" : text);
 		boolean listed = section < 0 && !page.sections.isEmpty();
@@ -453,7 +459,7 @@ final class LookupTools implements ChatApi.ToolRunner
 		{
 			out.append("\n\n[Cut here: the rest is on the page itself.]");
 		}
-		else if (listed && text.length() > LONG_PAGE_CHARS)
+		else if (listed && text.length() > size.longPageChars)
 		{
 			out.append("\n\n[A long page: next time, ask for one section with `section`. Its sections are:\n")
 				.append(sectionList(page.sections)).append(']');
@@ -534,7 +540,7 @@ final class LookupTools implements ChatApi.ToolRunner
 					+ ", or RuneLite hasn't loaded its prices yet."));
 			return;
 		}
-		List<ItemPrice> best = best(found, item, PRICE_RESULTS);
+		List<ItemPrice> best = best(found, item, size.priceResults);
 		List<Integer> ids = new ArrayList<>();
 		List<Long> each = new ArrayList<>();
 		for (ItemPrice p : best)

@@ -337,6 +337,40 @@ public class LookupToolsTest
 	}
 
 	@Test
+	public void fullLookUpsAskForMoreAndCutLater() throws Exception
+	{
+		LookupTools full = new LookupTools(wiki(5000), new FakePrices(), activity::add, () -> true, LookupSize.FULL);
+		StringBuilder described = new StringBuilder();
+		for (ChatApi.ToolSpec spec : full.specs())
+		{
+			described.append(spec.description).append('\n');
+		}
+		String specs = described.toString();
+		assertTrue(specs, specs.contains("Returns up to 10 page titles"));
+		assertTrue(specs, specs.contains("up to 15 tradeable items"));
+
+		answer("200", SEARCH);
+		run(full, "wiki_search", "{\"query\":\"abyssal whip\"}");
+		assertEquals("10", requests.get(0).queryParameter("srlimit"));
+
+		// About 30,000 characters: past the short cut, inside the full one. Still long, so its sections are listed.
+		StringBuilder text = new StringBuilder("Intro.");
+		StringBuilder sections = new StringBuilder();
+		for (int i = 1; i <= 30; i++)
+		{
+			text.append("\n== Part ").append(i).append(" ==\n").append("x".repeat(990));
+			sections.append(i == 1 ? "" : ",").append("{\"level\":\"2\",\"line\":\"Part ").append(i)
+				.append("\",\"index\":\"").append(i).append("\",\"fromtitle\":\"Money_making_guide\"}");
+		}
+		answer("200", "{\"parse\":{\"title\":\"Money making guide\",\"wikitext\":" + gson.toJson(text.toString())
+			+ ",\"sections\":[" + sections + "]}}");
+		ChatApi.ToolResult r = run(full, "wiki_page", "{\"title\":\"Money making guide\"}");
+		assertFalse(r.content, r.content.contains("Cut here"));
+		assertTrue(r.content, r.content.contains("x\n== Part 30 ==\n"));
+		assertTrue(r.content, r.content.contains("\n\n[A long page: next time, ask for one section with `section`."));
+	}
+
+	@Test
 	public void longPagesAreCutAndListTheirSections() throws Exception
 	{
 		StringBuilder text = new StringBuilder("Intro.");

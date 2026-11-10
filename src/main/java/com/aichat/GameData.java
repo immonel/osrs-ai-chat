@@ -484,6 +484,12 @@ final class GameData implements GameDataTools.Game
 	 */
 	static String bankText(Bank bank, String search, long now)
 	{
+		return bankText(bank, search, now, BANK_LINES);
+	}
+
+	/** {@code max}: the most items to list (see {@link LookupSize#bankLines}). */
+	static String bankText(Bank bank, String search, long now, int max)
+	{
 		String seen = "as last seen " + ago(now - bank.seenAt);
 		if (search == null)
 		{
@@ -492,9 +498,9 @@ final class GameData implements GameDataTools.Game
 				return "The player's bank was empty (" + seen + ").";
 			}
 			StringBuilder out = new StringBuilder("The player's bank (").append(seen).append("): ")
-				.append(count(bank.lines.size(), "item")).append(listedOf(bank.lines.size()))
+				.append(count(bank.lines.size(), "item")).append(listedOf(bank.lines.size(), max))
 				.append(", placeholders left out. Grand Exchange prices from RuneLite:");
-			appendItems(out, bank.lines, BANK_LINES);
+			appendItems(out, bank.lines, max);
 			appendTotal(out, bank.lines, "Total value of the bank");
 			return out.toString();
 		}
@@ -514,8 +520,8 @@ final class GameData implements GameDataTools.Game
 				+ count(bank.lines.size(), "item") + " in all). Try a shorter or different search.";
 		}
 		StringBuilder out = new StringBuilder("Items in the player's bank with \"").append(search).append("\" in their name (")
-			.append(seen).append(listedOf(matching.size())).append("), with Grand Exchange prices from RuneLite:");
-		appendItems(out, matching, BANK_LINES);
+			.append(seen).append(listedOf(matching.size(), max)).append("), with Grand Exchange prices from RuneLite:");
+		appendItems(out, matching, max);
 		appendTotal(out, matching, "Total value of these");
 		return out.toString();
 	}
@@ -637,9 +643,9 @@ final class GameData implements GameDataTools.Game
 	}
 
 	/** Said up front when a bank list is cut, so the model doesn't read on as if it had everything. */
-	private static String listedOf(int n)
+	private static String listedOf(int n, int max)
 	{
-		return n > BANK_LINES ? ", only the first " + BANK_LINES + " listed" : "";
+		return n > max ? ", only the first " + max + " listed" : "";
 	}
 
 	private static void appendItems(StringBuilder out, List<ItemLine> lines, int max)
