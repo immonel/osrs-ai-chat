@@ -18,6 +18,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
+import net.runelite.api.EquipmentInventorySlot;
 import net.runelite.http.api.item.ItemPrice;
 import okhttp3.OkHttpClient;
 import org.junit.After;
@@ -208,6 +209,18 @@ public class RequestRunnerTest
 
 		@Override
 		public GameData.Bank bank()
+		{
+			return null;
+		}
+
+		@Override
+		public List<GameData.StatLine> equipmentBonuses()
+		{
+			return Collections.emptyList();
+		}
+
+		@Override
+		public GameData.OwnedStats itemStats(String search, EquipmentInventorySlot slot)
 		{
 			return null;
 		}
@@ -405,8 +418,8 @@ public class RequestRunnerTest
 		runEdt();
 		host.characterRead.accept(null);
 		runEdt();
-		assertEquals(Arrays.asList("ge_price", "get_equipment", "get_inventory", "get_bank", "get_slayer_task",
-			"get_achievement_diaries"), toolNames());
+		assertEquals(Arrays.asList("ge_price", "get_equipment", "get_inventory", "get_bank", "get_equipment_bonuses",
+			"get_item_stats", "get_slayer_task", "get_achievement_diaries"), toolNames());
 		assertNotNull(api.last().toolRunner);
 
 		api.listener().onReply(reply("a", 1, 1));
