@@ -198,7 +198,10 @@ public class LookupToolsTest
 		assertTrue(r.content, r.content.contains("   The abyssal whip is a one-handed melee weapon that needs 70 <Attack>. "
 			+ "It's dropped by \"abyssal demons\" & more.\n"));
 		assertTrue(r.content, r.content.contains("2. Abyssal whip (or) - https://oldschool.runescape.wiki/w/Abyssal_whip_(or)\n   An ornamented version\n"));
-		assertTrue(r.content, r.content.endsWith("3. Frozen abyssal whip - https://oldschool.runescape.wiki/w/Frozen_abyssal_whip"));
+		assertTrue(r.content, r.content.contains("3. Frozen abyssal whip - https://oldschool.runescape.wiki/w/Frozen_abyssal_whip\n"));
+		// The Wiki found 40: the model hears that there's more than it was shown.
+		assertTrue(r.content, r.content.endsWith("\n[Only the best 3 listed; 37 more pages match. If none of these fits, "
+			+ "search again with other or more specific words.]"));
 		assertFalse(r.content, r.content.contains("searchmatch"));
 		assertEquals("Searched the Wiki for \"abyssal whip\"", lastActivity());
 

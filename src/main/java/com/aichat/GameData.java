@@ -492,7 +492,8 @@ final class GameData implements GameDataTools.Game
 				return "The player's bank was empty (" + seen + ").";
 			}
 			StringBuilder out = new StringBuilder("The player's bank (").append(seen).append("): ")
-				.append(count(bank.lines.size(), "item")).append(", placeholders left out. Grand Exchange prices from RuneLite:");
+				.append(count(bank.lines.size(), "item")).append(listedOf(bank.lines.size()))
+				.append(", placeholders left out. Grand Exchange prices from RuneLite:");
 			appendItems(out, bank.lines, BANK_LINES);
 			appendTotal(out, bank.lines, "Total value of the bank");
 			return out.toString();
@@ -513,7 +514,7 @@ final class GameData implements GameDataTools.Game
 				+ count(bank.lines.size(), "item") + " in all). Try a shorter or different search.";
 		}
 		StringBuilder out = new StringBuilder("Items in the player's bank with \"").append(search).append("\" in their name (")
-			.append(seen).append("), with Grand Exchange prices from RuneLite:");
+			.append(seen).append(listedOf(matching.size())).append("), with Grand Exchange prices from RuneLite:");
 		appendItems(out, matching, BANK_LINES);
 		appendTotal(out, matching, "Total value of these");
 		return out.toString();
@@ -635,6 +636,12 @@ final class GameData implements GameDataTools.Game
 		return "about " + count(minutes / 60, "hour") + " ago";
 	}
 
+	/** Said up front when a bank list is cut, so the model doesn't read on as if it had everything. */
+	private static String listedOf(int n)
+	{
+		return n > BANK_LINES ? ", only the first " + BANK_LINES + " listed" : "";
+	}
+
 	private static void appendItems(StringBuilder out, List<ItemLine> lines, int max)
 	{
 		for (int i = 0; i < lines.size() && i < max; i++)
@@ -644,7 +651,8 @@ final class GameData implements GameDataTools.Game
 		if (lines.size() > max)
 		{
 			out.append("\n...and ").append(count(lines.size() - max, "more item"))
-				.append(" not listed. Ask again with search to find particular items.");
+				.append(" not listed: this list is incomplete. Something missing from it may still be in the bank, so "
+					+ "search for it by name before saying they don't have it.");
 		}
 	}
 
