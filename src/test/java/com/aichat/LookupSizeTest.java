@@ -41,5 +41,6 @@ public class LookupSizeTest
 	{
 		assertEquals(GameData.BANK_LINES, LookupSize.SHORT.bankLines);
 		assertEquals(12_000, LookupSize.SHORT.pageChars);
+		assertEquals(GameData.STAT_LINES, LookupSize.SHORT.statLines);
 	}
 }

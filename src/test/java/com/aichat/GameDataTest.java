@@ -779,6 +779,21 @@ public class GameDataTest
 	}
 
 	@Test
+	public void fullLookUpsListMoreItemStats()
+	{
+		List<GameData.StatLine> lines = new ArrayList<>();
+		for (int i = 1; i <= 60; i++)
+		{
+			lines.add(in(GameData.Where.BANK, "Test blade " + i, new ItemStats(true, 0, 0,
+				ItemEquipmentStats.builder().slot(3).aslash(i).aspeed(4).build())));
+		}
+		String text = GameData.itemStatsText(new GameData.OwnedStats(lines, true, 0), null, EquipmentInventorySlot.WEAPON,
+			0, true, LookupSize.FULL.statLines);
+		assertEquals(60, listed(text));
+		assertFalse(text, text.contains("more items for this slot not listed"));
+	}
+
+	@Test
 	public void aSlotListingIsCutWithANote()
 	{
 		List<GameData.StatLine> lines = new ArrayList<>();

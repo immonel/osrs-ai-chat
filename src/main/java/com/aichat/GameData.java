@@ -1063,6 +1063,13 @@ final class GameData implements GameDataTools.Game
 	 */
 	static String itemStatsText(OwnedStats owned, String search, EquipmentInventorySlot slot, long now, boolean wiki)
 	{
+		return itemStatsText(owned, search, slot, now, wiki, STAT_LINES);
+	}
+
+	/** {@code max}: the most items to list (see {@link LookupSize#statLines}). */
+	static String itemStatsText(OwnedStats owned, String search, EquipmentInventorySlot slot, long now, boolean wiki,
+		int max)
+	{
 		List<StatLine> lines = new ArrayList<>(owned.lines);
 		if (slot != null)
 		{
@@ -1120,7 +1127,7 @@ final class GameData implements GameDataTools.Game
 					+ "bonuses can't be weighed against melee ones. ");
 		}
 		out.append(requirements(wiki));
-		for (int i = 0; i < found.size() && i < STAT_LINES; i++)
+		for (int i = 0; i < found.size() && i < max; i++)
 		{
 			StatLine line = found.get(i);
 			out.append("\n- ");
@@ -1136,9 +1143,9 @@ final class GameData implements GameDataTools.Game
 			}
 			out.append(") - ").append(described.get(i));
 		}
-		if (found.size() > STAT_LINES)
+		if (found.size() > max)
 		{
-			int more = found.size() - STAT_LINES;
+			int more = found.size() - max;
 			if (search != null)
 			{
 				out.append("\n...and ").append(count(more, "more matching item"))

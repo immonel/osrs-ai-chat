@@ -192,7 +192,7 @@ final class GameDataTools implements ChatApi.ToolRunner
 					+ "search, a slot, or both. A slot lists what they have for it: what's worn there first, then the "
 					+ "rest by their largest attack bonus in any one style (ammunition by ranged strength), an order "
 					+ "rather than a ranking. Use it rather than recalling an item's stats, and to pick the best of what "
-					+ "they already have for a fight. At most " + GameData.STAT_LINES + " items a call, with no level "
+					+ "they already have for a fight. At most " + size.statLines + " items a call, with no level "
 					+ "requirements in it"
 					+ (wiki ? "; for an item the player doesn't own, use the Wiki instead." : "; it has nothing on items "
 						+ "the player doesn't own."),
@@ -273,7 +273,7 @@ final class GameDataTools implements ChatApi.ToolRunner
 				else
 				{
 					readItems(report, "item stats", () -> game.itemStats(search, slot),
-						owned -> itemStatsOutcome(owned, search, slot, now, wiki));
+						owned -> itemStatsOutcome(owned, search, slot, now, wiki, size.statLines));
 				}
 			}
 			else if (GET_SLAYER_TASK.equals(name))
@@ -350,13 +350,13 @@ final class GameDataTools implements ChatApi.ToolRunner
 	 * at.
 	 */
 	private static Outcome itemStatsOutcome(GameData.OwnedStats owned, String search, EquipmentInventorySlot slot,
-		long now, boolean wiki)
+		long now, boolean wiki, int max)
 	{
 		String slotPart = slot == null ? "" : "the " + GameData.slotName(slot).toLowerCase(Locale.ROOT) + " slot";
 		String what = search == null ? slotPart
 			: "\"" + ChatApi.shorten(search, 60) + "\"" + (slot == null ? "" : " in " + slotPart);
 		return new Outcome(SHARED + "item stats for " + what + (owned.bankSeen ? ", bank included" : " (bank not seen yet)"),
-			ChatApi.ToolResult.ok(GameData.itemStatsText(owned, search, slot, now, wiki)));
+			ChatApi.ToolResult.ok(GameData.itemStatsText(owned, search, slot, now, wiki, max)));
 	}
 
 	/** Equipment, inventory, bank and the bonuses of their items: only with "Share items and gear". */
