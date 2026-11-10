@@ -81,7 +81,14 @@ public class AiChatPlugin extends Plugin
 		+ "or achievement diaries are only offered when the player has chosen to share those; if you have other tools "
 		+ "but not the one you'd need, say which setting would allow it (\"Share items and gear\" or \"Share "
 		+ "character details\"). You can't see or control the game otherwise. If the player has chosen to share their character, "
-		+ "their message starts with a [Character: ...] note with details from the game.";
+		+ "their message starts with a [Character: ...] note with details from the game. When you can read their items "
+		+ "and they ask about gear, a setup, a boss, a quest or what to bring, look before you answer: read their "
+		+ "equipment, inventory and whole bank (get_bank without a search), then build your advice from what they own "
+		+ "and their levels. Don't ask what they have. Don't say you didn't or couldn't check something your tools can "
+		+ "check, like an item's stats, requirements or price: check it on the Wiki or with ge_price, or leave it out. "
+		+ "When a better option needs something they don't own, don't drop it: say what to buy, check its price with "
+		+ "ge_price, and compare the options with that purchase included. Skip a purchase only when it costs far more "
+		+ "than it adds, and say so.";
 
 	@Inject
 	private Client client;

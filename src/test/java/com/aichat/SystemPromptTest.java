@@ -23,4 +23,16 @@ public class SystemPromptTest
 		assertFalse(AiChatPlugin.SYSTEM_PROMPT.contains("don't use tables"));
 		assertTrue(AiChatPlugin.SYSTEM_PROMPT.contains("small tables are fine"));
 	}
+
+	@Test
+	public void itLooksAtThePlayersItemsAndSuggestsWhatToBuy()
+	{
+		// Gear advice should come from what the player owns, and a better setup shouldn't be dropped for one missing
+		// item the player could buy.
+		String prompt = AiChatPlugin.SYSTEM_PROMPT;
+		assertTrue(prompt.contains("look before you answer"));
+		assertTrue(prompt.contains("get_bank without a search"));
+		assertTrue(prompt.contains("Don't say you didn't or couldn't check"));
+		assertTrue(prompt.contains("say what to buy"));
+	}
 }
