@@ -46,7 +46,7 @@ their own order rather than lay it out themselves at a moment of their choosing.
   request, in what order, and which runner answers each call.
 - `ConversationBuilderTest`: what a request sends (history, character notes, summaries, replaying Claude's replies).
   `ChatStoreTest`: what "Save chat history" saves and loads, files from older versions included. `ChatSaverTest`: when
-  the saved chats are opened, brought back, saved and deleted, with a stand-in disk.
+  the saved chats are opened, brought back, saved and deleted, with a stand-in disk. `ChatTest`: what "Copy chat" copies.
 - `LookupToolsTest`: the Wiki and GE price tools, against a stand-in Wiki and canned prices. `GameDataTest` and
   `GameDataToolsTest`: writing up the player's items, Slayer task and diaries, and when the game-data tools share.
   `CharacterInfoTest`: the character note.

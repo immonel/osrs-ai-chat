@@ -143,4 +143,39 @@ class Chat
 		retryWhy = null;
 		retryAt = 0;
 	}
+
+	/**
+	 * The chat as plain text, for "Copy chat": each question and reply under who wrote it, a blank line between them, and
+	 * replies' formatting marks gone (as a reply's Copy leaves them). Notes and errors are left out. Empty if there's
+	 * nothing to copy.
+	 */
+	String plainText()
+	{
+		StringBuilder out = new StringBuilder();
+		for (Message m : messages)
+		{
+			String who;
+			String text;
+			if (m.role == Role.USER)
+			{
+				who = "You";
+				text = m.text;
+			}
+			else if (m.role == Role.ASSISTANT)
+			{
+				who = m.who == null || m.who.isEmpty() ? "Assistant" : m.who;
+				text = Markdown.plainText(m.text);
+			}
+			else
+			{
+				continue;
+			}
+			if (out.length() > 0)
+			{
+				out.append("\n\n");
+			}
+			out.append(who).append(":\n").append(text.trim());
+		}
+		return out.toString();
+	}
 }
